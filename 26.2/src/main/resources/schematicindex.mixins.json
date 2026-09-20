@@ -1,0 +1,25 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "com.fudgedy.schematicindex.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "mixins": [],
+  "client": [
+    "EntityRendererMixin",
+    "KeyBindsScreenMixin",
+    "KeyMappingCategoryAccessor",
+    "MainMixin",
+    "MouseHandlerMixin",
+    "LivingEntityRenderMixin",
+    "OptionsMixin",
+    "ResourceOverrideMixin",
+    "GameRendererMixin",
+    "ToastManagerMixin",
+    "OutputTargetMixin",
+    "TextDisplayMixin"
+  ],
+  "server": [],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 1,
+  "id": "${mod_id}",
+  "version": "${version}",
+  "name": "${mod_name}",
+  "description": "An in-game catalogue of community schematics for Litematica: browse thumbnails, filter by category, and download straight into your schematics folder.",
+  "authors": [
+    "Fudgedy"
+  ],
+  "contact": {
+    "homepage": "https://modrinth.com/mod/the-schematic-index"
+  },
+  "license": "MIT",
+  "icon": "assets/schematicindex/icon.png",
+  "environment": "client",
+  "entrypoints": {
+    "client": [
+      "com.fudgedy.schematicindex.SchematicIndexMod"
+    ],
+    "modmenu": [
+      "com.fudgedy.schematicindex.ModMenuIntegration"
+    ]
+  },
+  "mixins": [
+    {
+      "config": "schematicindex.mixins.json",
+      "environment": "client"
+    },
+    {
+      "config": "schematicindex.litematica.mixins.json",
+      "environment": "client"
+    }
+  ],
+  "depends": {
+    "fabricloader": ">=0.16.0",
+    "minecraft": "~${minecraft}",
+    "java": ">=25",
+    "litematica": ">=0.26.0",
+    "malilib": ">=0.27.0"
+  }
+}

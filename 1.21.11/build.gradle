@@ -1,0 +1,92 @@
+plugins {
+	id 'fabric-loom' version "${loom_version}"
+}
+
+version = "${project.mod_version}+${project.minecraft_version}"
+group = project.maven_group
+
+base {
+	archivesName = project.archives_base_name
+}
+
+repositories {
+	maven {
+		url = "https://masa.dy.fi/maven/sakura-ryoko"
+		content { includeGroupAndSubgroups("fi.dy.masa") }
+	}
+	// Litematica depends on conditional-mixin, which lives here.
+	maven {
+		url = 'https://maven.fallenbreath.me/releases'
+		content { includeGroupAndSubgroups("me.fallenbreath") }
+	}
+	// Mod Menu, compile-only so the integration entrypoint stays optional at runtime
+	maven {
+		url = 'https://maven.terraformersmc.com/releases'
+		content { includeGroupAndSubgroups("com.terraformersmc") }
+	}
+}
+
+dependencies {
+	minecraft "com.mojang:minecraft:${project.minecraft_version}"
+	// Litematica and MaLiLib are built against Mojang's official mappings, so we must match them.
+	mappings loom.officialMojangMappings()
+	modImplementation "net.fabricmc:fabric-loader:${project.fabric_loader_version}"
+
+	modImplementation "fi.dy.masa.malilib:malilib-fabric-${project.minecraft_version}:${project.malilib_version}"
+	modImplementation "fi.dy.masa.litematica:litematica-fabric-${project.minecraft_version}:${project.litematica_version}"
+
+	// Published against intermediary, so Loom has to remap it; compile-only keeps it optional at runtime
+	modCompileOnly "com.terraformersmc:modmenu:${project.modmenu_version}"
+}
+
+processResources {
+	def props = [
+			version      : project.version,
+			mod_id       : project.mod_id,
+			mod_name     : 'The Schematic Index',
+			minecraft    : project.minecraft_version,
+			loader       : project.fabric_loader_version
+	]
+	inputs.properties props
+
+	filesMatching("fabric.mod.json") {
+		expand props
+	}
+}
+
+// A mixin listed without a class only fails at launch, as a crash in every profile that loads the jar,
+// so the list is checked against the sources before anything is packed
+tasks.register('checkMixinList') {
+	def config = file('src/main/resources/schematicindex.mixins.json')
+	def mixinDir = file('src/main/java/com/fudgedy/schematicindex/mixin')
+	inputs.file config
+	inputs.dir mixinDir
+	doLast {
+		def json = new groovy.json.JsonSlurper().parse(config)
+		def listed = (json.mixins ?: []) + (json.client ?: []) + (json.server ?: [])
+		def missing = listed.findAll { !new File(mixinDir, "${it}.java").exists() }
+		if (!missing.isEmpty()) {
+			throw new GradleException("schematicindex.mixins.json lists mixins with no source: ${missing}")
+		}
+	}
+}
+
+tasks.named('processResources') {
+	dependsOn tasks.named('checkMixinList')
+}
+
+tasks.withType(JavaCompile).configureEach {
+	it.options.encoding = "UTF-8"
+	it.options.release = 21
+}
+
+java {
+	sourceCompatibility = JavaVersion.VERSION_21
+	targetCompatibility = JavaVersion.VERSION_21
+}
+
+jar {
+	from("LICENSE") {
+		rename { "${it}_${project.archives_base_name}" }
+	}
+}
