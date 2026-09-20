@@ -4,7 +4,7 @@
 
 <p align="center">
   <a href="https://modrinth.com/mod/the-schematic-index"><img src="https://img.shields.io/modrinth/dt/the-schematic-index?logo=modrinth&label=Downloads&color=2A7A5B&style=for-the-badge" alt="Modrinth downloads"></a>
-  <a href="https://discord.gg/schematicindex"><img src="https://img.shields.io/discord/1538685513148407868?logo=discord&logoColor=white&label=Discord&color=5865F2&style=for-the-badge" alt="Discord"></a>
+  <a href="https://discord.gg/schematicindex"><img src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fdiscord.com%2Fapi%2Fv10%2Finvites%2Fschematicindex%3Fwith_counts%3Dtrue&query=%24.approximate_member_count&suffix=%20members&label=Discord&logo=discord&logoColor=white&color=5865F2&style=for-the-badge" alt="Discord"></a>
   <a href="https://modrinth.com/mod/the-schematic-index/versions"><img src="https://img.shields.io/badge/Minecraft-1.21.11%20%7C%2026.1%20%7C%2026.2-3C3C3C?logo=minecraft&style=for-the-badge" alt="Minecraft versions"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-lightgrey?style=for-the-badge" alt="MIT licence"></a>
 </p>
@@ -12,7 +12,7 @@
 <p align="center">
   <a href="https://modrinth.com/mod/the-schematic-index"><b>Download on Modrinth</b></a> ·
   <a href="https://discord.gg/schematicindex"><b>Join the Discord</b></a> ·
-  <a href="#building-from-source"><b>Build from source</b></a>
+  <a href="#how-to-contribute"><b>How to contribute</b></a>
 </p>
 
 ---
@@ -93,7 +93,14 @@ The catalogue itself is served by a hosted backend that is not part of this repo
 `26.2/` is the source of truth. The other two folders are ports of it that differ only where the
 Minecraft API changed; a change lands in `26.2/` first and is carried across with the same edit.
 
-## Building from source
+## How to contribute
+
+Bug reports and pull requests are more than welcome. For anything larger than a small fix, open an issue or say
+hello in a support ticket in the [Discord](https://discord.gg/schematicindex) first, so that the work is not copied.
+
+If you have found a security issue within the mod or server side, I kindly ask that you please report it privately through Discord rather than a public issue, use the same support ticket system.
+
+### Setting up
 
 Each version folder is a standalone Gradle project.
 
@@ -112,12 +119,13 @@ To run a development client with the mod loaded:
 ./gradlew runClient
 ```
 
-## Contributing
+### Making a change
 
-Bug reports and pull requests are more than welcome. For anything larger than a small fix, open an issue or say
-hello in a support ticket in the [Discord](https://discord.gg/schematicindex) first, so that the work is not copied. Make your change in `26.2/` and, where the same code exists, apply it to `26.1/` and `1.21.11/` as well.
-
-If you have found a security issue within the mod or server side, I kindly ask that you please report it privately through Discord rather than a public issue, use the same support ticket system.
+1. Fork the repository and create a branch for your change.
+2. Make your change in `26.2/` first; it is the source of truth.
+3. Where the same code exists, apply it to `26.1/` and `1.21.11/` as well, so every version ships the fix.
+4. Build each version you touched and try it in a development client.
+5. Open a pull request describing what changed and why.
 
 ## Licence
 
