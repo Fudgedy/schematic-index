@@ -4,7 +4,7 @@
 
 <p align="center">
   <a href="https://modrinth.com/mod/the-schematic-index"><img src="https://img.shields.io/modrinth/dt/the-schematic-index?logo=modrinth&label=Downloads&color=2A7A5B&style=for-the-badge" alt="Modrinth downloads"></a>
-  <a href="https://discord.gg/schematicindex"><img src="https://img.shields.io/badge/Discord-Join-5865F2?logo=discord&logoColor=white&style=for-the-badge" alt="Discord"></a>
+  <a href="https://discord.gg/schematicindex"><img src="https://img.shields.io/discord/1538685513148407868?logo=discord&logoColor=white&label=Discord&color=5865F2&style=for-the-badge" alt="Discord"></a>
   <a href="https://modrinth.com/mod/the-schematic-index/versions"><img src="https://img.shields.io/badge/Minecraft-1.21.11%20%7C%2026.1%20%7C%2026.2-3C3C3C?logo=minecraft&style=for-the-badge" alt="Minecraft versions"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-lightgrey?style=for-the-badge" alt="MIT licence"></a>
 </p>
