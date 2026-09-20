@@ -18,9 +18,9 @@
 ---
 
 The Schematic Index is a Fabric client mod that puts a community schematic catalogue inside Minecraft.
-Browse builds in a grid, spin them around in a 3D preview, and download them straight into
-[Litematica](https://modrinth.com/mod/litematica) without ever tabbing out. It also turns images into
-mapart schematics, and gives everyone running the mod a small nametag badge with cosmetics to unlock.
+Browse builds in a post-like grid, inspect them in a 3D preview, and download them straight into
+[Litematica](https://modrinth.com/mod/litematica) , all without ever exiting minecraft. It also turns images into
+mapart schematics ( Flat + Staircased ), and gives everyone running the mod a small nametag badge with cosmetics to unlock.
 
 <p align="center">
   <img src="assets/browse.png" alt="The browse tab: a grid of schematic cards with categories, tags, search and sorting" width="900">
@@ -33,10 +33,10 @@ mapart schematics, and gives everyone running the mod a small nametag badge with
 - Likes, star ratings, collections, a history tab and a following feed with a notification when a
   creator you follow posts something new.
 - Every download lands in the schematics folder of the running client, or a folder you pick.
-- Right-click a card for quick actions, or download a whole collection in one go.
+- Right-click a post for quick actions, or download a whole collection in one go.
 
 ### 3D preview
-Orbit and zoom around a build, or fly through it in spectator mode. Cut away layers with the slider,
+Orbit and zoom around a build, or use spectator mode to inspect it as if you were actually in spectator mode in minecraft. Cut away layers with the slider,
 hide close blocks while orbiting, save a PNG of the view, and read the full material list before you
 download.
 
@@ -47,8 +47,7 @@ download.
 ### Mapart
 Pick or paste an image and get a Litematica schematic back: every map colour, classic and flat
 staircasing, dithering, colour adjustments, editable block palettes with import and export, split
-saves for large maps, per-map material lists, a corner overlay for placing the build, and a temporary
-in-world load to check it before committing.
+file saves for larger maps, per-map material lists, an in game corner overlay for placing the mapart correctly, and a temporary in-world load to check it before downloading.
 
 <p align="center">
   <img src="assets/mapart.png" alt="The mapart tab with the palette editor, preview and material list" width="900">
@@ -115,11 +114,10 @@ To run a development client with the mod loaded:
 
 ## Contributing
 
-Bug reports and pull requests are welcome. For anything larger than a small fix, open an issue or say
-hello in [Discord](https://discord.gg/schematicindex) first so the work is not duplicated. Make your
-change in `26.2/` and, where the same code exists, apply it to `26.1/` and `1.21.11/` as well.
+Bug reports and pull requests are more than welcome. For anything larger than a small fix, open an issue or say
+hello in a support ticket in the [Discord](https://discord.gg/schematicindex) first, so that the work is not copied. Make your change in `26.2/` and, where the same code exists, apply it to `26.1/` and `1.21.11/` as well.
 
-Found a security issue? Please report it privately through Discord rather than a public issue.
+If you have found a security issue within the mod or server side, I kindly ask that you please report it privately through Discord rather than a public issue, use the same support ticket system.
 
 ## Licence
 
