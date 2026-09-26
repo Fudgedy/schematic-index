@@ -68,6 +68,16 @@ public final class TextInput
 				this.value.isEmpty() ? Theme.TEXT_ASH : Theme.TEXT);
 	}
 
+	// A locked field: drops focus and hit area so it cannot be typed into until the owner renders it live again
+	public void renderDisabled(GuiGraphicsExtractor ctx, Font font, Rect rect, String placeholder)
+	{
+		this.bounds.set(0, 0, 0, 0);
+		this.focused = false;
+		Theme.roundedRect(ctx, rect.x, rect.y, rect.width, rect.height, Theme.RADIUS_PILL, Theme.SURFACE);
+		Theme.text(ctx, font, Theme.clip(font, placeholder, rect.width - 12), rect.x + 6, rect.y + (rect.height - font.lineHeight) / 2 + 1,
+				Theme.TEXT_ASH);
+	}
+
 	// Returns true when the click landed in the field; a click elsewhere drops focus and commits
 	public boolean click(double mouseX, double mouseY)
 	{

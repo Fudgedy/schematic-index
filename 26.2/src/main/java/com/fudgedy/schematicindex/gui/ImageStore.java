@@ -430,6 +430,21 @@ public final class ImageStore
 		}
 	}
 
+	private static void release(Minecraft client, String key)
+	{
+		REQUESTED.remove(key);
+		Identifier id = READY.remove(key);
+
+		if (id == null)
+		{
+			return;
+		}
+
+		client.getTextureManager().release(id);
+		ImageClass cls = ImageClass.of(key);
+		READY_BYTES[cls.ordinal()] -= cls.bytes;
+	}
+
 	private static Path cacheDirectory()
 	{
 		return FabricLoader.getInstance().getGameDir().resolve(SchematicIndexMod.MOD_ID).resolve("imagecache");
@@ -526,6 +541,23 @@ public final class ImageStore
 		while ((pending = PENDING.poll()) != null)
 		{
 			pending.image().close();
+		}
+	}
+
+	// A discarded picture set frees its textures now instead of waiting for the budget to push them out
+	public static void releasePicked(int start, int count)
+	{
+		if (start < PICKED_BASE)
+		{
+			return;
+		}
+
+		Minecraft client = Minecraft.getInstance();
+
+		for (int slot = start; slot < start + count; slot++)
+		{
+			release(client, "f:local:" + slot);
+			release(client, "t:local:" + slot);
 		}
 	}
 

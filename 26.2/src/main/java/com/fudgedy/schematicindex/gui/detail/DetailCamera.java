@@ -6,6 +6,7 @@ import com.fudgedy.schematicindex.catalogue.Shards;
 import com.fudgedy.schematicindex.catalogue.Usage;
 import com.fudgedy.schematicindex.gui.IndexScreen;
 import com.fudgedy.schematicindex.gui.SchematicPreview;
+import com.fudgedy.schematicindex.gui.SpectatorCamera;
 import com.fudgedy.schematicindex.gui.Theme;
 import com.fudgedy.schematicindex.gui.widget.Buttons;
 import com.fudgedy.schematicindex.gui.widget.Controls;
@@ -20,7 +21,6 @@ import java.util.Set;
 // The 3D preview's orbit and free-fly camera, plus the layer slider that trims it
 public class DetailCamera
 {
-	private static final double MAX_SPECTATOR_SPEED = 120.0D; // blocks/sec
 	// Posts already counted as flown this launch, so toggling the mode on one build is one quest event
 	private static final Set<String> FLOWN = new HashSet<>();
 
@@ -33,9 +33,7 @@ public class DetailCamera
 	boolean cutaway = true;
 	boolean freeLook;
 	double @Nullable [] freeEye;
-	private final Set<Integer> spectatorKeys = new HashSet<>(); // GLFW key codes
-	private long spectatorMoveNanos; // nanoTime of the previous move tick, 0 when not moving
-	private float spectatorSpeed = 1.0F;
+	private final SpectatorCamera fly = new SpectatorCamera();
 	boolean draggingLayer;
 	final Rect cutawayToggle = new Rect();
 	final Rect spectatorButton = new Rect();
@@ -50,94 +48,20 @@ public class DetailCamera
 
 	public static boolean isSpectatorKey(int key)
 	{
-		return key == 87 || key == 83 || key == 65 || key == 68 || key == 32 || key == 340 || key == 341;
+		return SpectatorCamera.isKey(key);
 	}
 
-	// Wall-clock dt, so held keys glide instead of stepping once per key-repeat
 	public void tick()
 	{
 		double[] eye = this.freeEye;
 		SchematicEntry entry = this.view.entry();
 
-		if (!this.view.model || !this.freeLook || eye == null || entry == null
-				|| this.spectatorKeys.isEmpty())
-		{
-			this.spectatorMoveNanos = 0L;
-			return;
-		}
-
-		long now = System.nanoTime();
-
-		if (this.spectatorMoveNanos == 0L)
-		{
-			this.spectatorMoveNanos = now;
-			return;
-		}
-
-		// Clamped so a hitch cannot fling the camera across the scene in one jump
-		double dt = Math.min((now - this.spectatorMoveNanos) / 1_000_000_000.0D, 0.1D);
-		this.spectatorMoveNanos = now;
-
-		if (dt <= 0.0D)
+		if (!this.view.model || !this.freeLook || eye == null || entry == null)
 		{
 			return;
 		}
 
-		double yaw = Math.toRadians(this.yaw);
-		double pitch = Math.toRadians(this.pitch);
-		double cosPitch = Math.cos(pitch);
-		double forwardX = Math.sin(yaw) * cosPitch;
-		double forwardY = -Math.sin(pitch);
-		double forwardZ = Math.cos(yaw) * cosPitch;
-		// Must equal the renderer's screen-right, forward x worldUp, or A and D invert against the view
-		double rightX = -Math.cos(yaw);
-		double rightZ = Math.sin(yaw);
-
-		double speed = Math.min(this.freeLookStep() * 15.0D * this.spectatorSpeed, MAX_SPECTATOR_SPEED);
-		double dist = speed * dt;
-
-		if (this.spectatorKeys.contains(87))
-		{ // W: forward
-			eye[0] += forwardX * dist;
-			eye[1] += forwardY * dist;
-			eye[2] += forwardZ * dist;
-		}
-
-		if (this.spectatorKeys.contains(83))
-		{ // S: back
-			eye[0] -= forwardX * dist;
-			eye[1] -= forwardY * dist;
-			eye[2] -= forwardZ * dist;
-		}
-
-		if (this.spectatorKeys.contains(65))
-		{ // A: strafe left
-			eye[0] -= rightX * dist;
-			eye[2] -= rightZ * dist;
-		}
-
-		if (this.spectatorKeys.contains(68))
-		{ // D: strafe right
-			eye[0] += rightX * dist;
-			eye[2] += rightZ * dist;
-		}
-
-		if (this.spectatorKeys.contains(32))
-		{ // Space: up
-			eye[1] += dist;
-		}
-
-		if (this.spectatorKeys.contains(340) || this.spectatorKeys.contains(341))
-		{ // Shift: down
-			eye[1] -= dist;
-		}
-
-		// The eye may pull back a size-scaled margin beyond each face, so an overview never shrinks the build to a speck
-		double span = Math.max(entry.sizeX(), Math.max(entry.sizeY(), entry.sizeZ()));
-		double margin = Math.max(span * 1.5D, 24.0D);
-		eye[0] = Math.max(-margin, Math.min(entry.sizeX() + margin, eye[0]));
-		eye[1] = Math.max(-margin, Math.min(entry.sizeY() + margin, eye[1]));
-		eye[2] = Math.max(-margin, Math.min(entry.sizeZ() + margin, eye[2]));
+		this.fly.tick(eye, this.yaw, this.pitch, this.freeLookStep(), entry.sizeX(), entry.sizeY(), entry.sizeZ());
 	}
 
 	public void setMode(boolean spectator, SchematicEntry entry)
@@ -160,12 +84,9 @@ public class DetailCamera
 				? SchematicPreview.eye(entry.schematicSlot(), this.yaw, this.pitch,
 						this.zoom, this.cutaway)
 				: null;
-		this.spectatorKeys.clear();
-		this.spectatorMoveNanos = 0L;
-		this.spectatorSpeed = 1.0F;
-		this.view.screen.status = spectator
-				? "Spectator: drag to look, WASD to fly, Space/Shift up/down, scroll to change speed."
-				: "";
+		this.fly.clearKeys();
+		this.fly.resetSpeed();
+		this.view.screen.status = spectator ? SpectatorCamera.HINT : "";
 	}
 
 	public void reset()
@@ -176,25 +97,23 @@ public class DetailCamera
 		this.layer = 1.0F;
 		this.freeLook = false;
 		this.freeEye = null;
-		this.spectatorKeys.clear();
-		this.spectatorMoveNanos = 0L;
+		this.fly.clearKeys();
 		this.view.screen.status = "";
 	}
 
 	public void clearHeldKeys()
 	{
-		this.spectatorKeys.clear();
-		this.spectatorMoveNanos = 0L;
+		this.fly.clearKeys();
 	}
 
 	public void pressKey(int key)
 	{
-		this.spectatorKeys.add(key);
+		this.fly.pressKey(key);
 	}
 
 	public void releaseKey(int key)
 	{
-		this.spectatorKeys.remove(key);
+		this.fly.releaseKey(key);
 	}
 
 	public void setLayerFromMouse(double mouseX)
@@ -293,7 +212,6 @@ public class DetailCamera
 	void adjustSpeed(double scrollY)
 	{
 		// In free-look the wheel adjusts fly speed, not zoom; tick caps the absolute value
-		float factor = scrollY > 0 ? 1.3F : 1.0F / 1.3F;
-		this.spectatorSpeed = Math.max(0.005F, Math.min(12.0F, this.spectatorSpeed * factor));
+		this.fly.adjustSpeed(scrollY);
 	}
 }

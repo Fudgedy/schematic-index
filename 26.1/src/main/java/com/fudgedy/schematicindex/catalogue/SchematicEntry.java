@@ -36,7 +36,9 @@ public record SchematicEntry(
 		int myStars,
 		List<Material> materials,
 		boolean materialsLoaded,
-		int[] posterStops
+		int[] posterStops,
+		// YYYY-MM-DD it won Build of the Day, or null if it never has
+		String featuredOn
 )
 {
 	// One shared empty array keeps two parses of the same lite row equal, since arrays compare by identity
@@ -72,7 +74,7 @@ public record SchematicEntry(
 		this(id, title, thumbnailName, poster, designer, category, sizeX, sizeY, sizeZ, blockCount, downloads,
 				likes, postedAt, description, imageCount, imageStart, schematicSlot, downloaded, thumbnailUrl,
 				imageUrls, originalUrls, fileUrl, fileHash, fileSize, liked, trendScore, views, starAvg, starCount,
-				myStars, materials, false, NO_STOPS);
+				myStars, materials, false, NO_STOPS, null);
 	}
 
 	public SchematicEntry withDetails(String description, List<Material> materials)
@@ -82,7 +84,18 @@ public record SchematicEntry(
 				this.postedAt, description, this.imageCount, this.imageStart, this.schematicSlot,
 				this.downloaded, this.thumbnailUrl, this.imageUrls, this.originalUrls, this.fileUrl, this.fileHash,
 				this.fileSize, this.liked, this.trendScore, this.views, this.starAvg, this.starCount, this.myStars,
-				materials, true, this.posterStops);
+				materials, true, this.posterStops, this.featuredOn);
+	}
+
+	// A distinct id keeps a live preview out of the card text cache the real post uses
+	public SchematicEntry asPreview(String id, String title, String thumbnailName, String designer, Category category)
+	{
+		return new SchematicEntry(id, title, thumbnailName, this.poster, designer,
+				category, this.sizeX, this.sizeY, this.sizeZ, this.blockCount, this.downloads, this.likes,
+				this.postedAt, this.description, this.imageCount, this.imageStart, this.schematicSlot,
+				this.downloaded, this.thumbnailUrl, this.imageUrls, this.originalUrls, this.fileUrl, this.fileHash,
+				this.fileSize, this.liked, this.trendScore, this.views, this.starAvg, this.starCount, this.myStars,
+				this.materials, this.materialsLoaded, this.posterStops, this.featuredOn);
 	}
 
 	public SchematicEntry withLikes(int likes, boolean liked)
@@ -92,7 +105,18 @@ public record SchematicEntry(
 				this.postedAt, this.description, this.imageCount, this.imageStart, this.schematicSlot,
 				this.downloaded, this.thumbnailUrl, this.imageUrls, this.originalUrls, this.fileUrl, this.fileHash,
 				this.fileSize, liked, this.trendScore, this.views, this.starAvg, this.starCount, this.myStars,
-				this.materials, this.materialsLoaded, this.posterStops);
+				this.materials, this.materialsLoaded, this.posterStops, this.featuredOn);
+	}
+
+	public SchematicEntry withText(String title, String thumbnailName, String designer, String description,
+			Category category)
+	{
+		return new SchematicEntry(this.id, title, thumbnailName, this.poster, designer,
+				category, this.sizeX, this.sizeY, this.sizeZ, this.blockCount, this.downloads, this.likes,
+				this.postedAt, description, this.imageCount, this.imageStart, this.schematicSlot,
+				this.downloaded, this.thumbnailUrl, this.imageUrls, this.originalUrls, this.fileUrl, this.fileHash,
+				this.fileSize, this.liked, this.trendScore, this.views, this.starAvg, this.starCount, this.myStars,
+				this.materials, this.materialsLoaded, this.posterStops, this.featuredOn);
 	}
 
 	public static SchematicEntry local(String id, String title, String thumbnailName, String poster,
@@ -194,5 +218,21 @@ public record SchematicEntry(
 
 		long months = days / 30L;
 		return months < 12L ? months + "mo ago" : (months / 12L) + "y ago";
+	}
+
+	public String featuredOnLabel()
+	{
+		return formatDay(this.featuredOn);
+	}
+
+	// Reformats the server's YYYY-MM-DD without a date library; an odd value degrades to blank, not a crash
+	public static String formatDay(String isoDay)
+	{
+		if (isoDay == null || isoDay.length() != 10 || isoDay.charAt(4) != '-' || isoDay.charAt(7) != '-')
+		{
+			return "";
+		}
+
+		return isoDay.substring(5, 7) + "/" + isoDay.substring(8, 10) + "/" + isoDay.substring(2, 4);
 	}
 }

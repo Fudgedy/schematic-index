@@ -67,6 +67,28 @@ through a daily streak, weekly quests and inviting friends.
   <img src="assets/shards.png" alt="The Shards tab: daily streak, invite a friend and weekly quests" width="700">
 </p>
 
+### Discord linking
+Link your Discord account in game to unlock a free **{Discord}** tag and **100 Shards**. All Discord Boosters
+now get a {Booster} tag as well.
+
+### Build of the Day
+Every day the community votes on 3 builds, and the winner gets featured with a crown, plus some Shards for the
+designer and the poster.
+
+### Achievements and effects
+New effects with custom animations, and new achievements that are earned through milestones inside the mod.
+
+### Shard menu and store
+We fully redesigned the Shard menu with new streaks, quests, leaderboards and referral tabs. You can now also
+support the mod by buying Shards on our [website](https://schematicindex.com).
+
+### Leaderboards
+Compete for Most Shards, Streaks and Highest Streaks, displayed in game and on the official
+[website](https://schematicindex.com/leaderboards).
+
+### Open uploads
+Everyone can now post their builds, with the new 3D Image Selector (a 3D previewer for taking pictures).
+
 ## Installation
 
 1. Install [Fabric Loader](https://fabricmc.net/use/) for your Minecraft version.

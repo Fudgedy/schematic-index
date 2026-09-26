@@ -5,6 +5,7 @@ import com.fudgedy.schematicindex.ModTags;
 import com.fudgedy.schematicindex.catalogue.Follows;
 import com.fudgedy.schematicindex.catalogue.Premium;
 import com.fudgedy.schematicindex.catalogue.SchematicEntry;
+import com.fudgedy.schematicindex.gui.Crown;
 import com.fudgedy.schematicindex.gui.IndexScreen;
 import com.fudgedy.schematicindex.gui.SchematicPreview;
 import com.fudgedy.schematicindex.gui.Theme;
@@ -282,6 +283,15 @@ class DetailRender
 				infoX, line, Theme.TEXT);
 		line += font.lineHeight + 11;
 
+		if (entry.featuredOn() != null && !entry.featuredOn().isBlank())
+		{
+			Crown.draw(ctx, infoX, line + 1);
+			String won = Theme.clip(font, "Won Build of the Day on " + entry.featuredOnLabel(),
+					infoWidth - Crown.WIDTH - Theme.SPACE_XS);
+			Theme.text(ctx, font, won, infoX + Crown.WIDTH + Theme.SPACE_XS, line, Theme.GOLD_BRIGHT);
+			line += font.lineHeight + 8;
+		}
+
 		// A premium listing belongs to a partner, not a poster, so it drops follow / profile / posted-by
 		if (this.view.isPremium())
 		{
@@ -438,8 +448,23 @@ class DetailRender
 			int starRowHeight = Math.round(font.lineHeight * starScale);
 			Theme.text(ctx, font, "Your rating", infoX, line + (starRowHeight - font.lineHeight) / 2,
 					Theme.TEXT_ASH);
-			Stars.draw(ctx, font, infoX + infoWidth - starRowWidth, line, this.view.myStars, starScale, true,
-					mouseX, mouseY, this.view.starRects);
+			int starX = infoX + infoWidth - starRowWidth;
+			float nudge = RatingNudge.progress(entry.id(), this.view.myStars);
+			Stars.draw(ctx, font, starX, line, this.view.myStars, starScale, true, mouseX, mouseY,
+					this.view.starRects);
+
+			boolean overStars = mouseX >= starX && mouseX < starX + starRowWidth && mouseY >= line - 1
+					&& mouseY < line + starRowHeight + 1;
+
+			if (nudge >= 0.0F && (this.view.myStars > 0 || overStars))
+			{
+				RatingNudge.stop(entry.id());
+			}
+			else if (nudge >= 0.0F)
+			{
+				RatingNudge.shine(ctx, font, starX, line, starScale, nudge);
+			}
+
 			line += starRowHeight + 6;
 		}
 		else

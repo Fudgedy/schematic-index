@@ -75,9 +75,8 @@ import java.util.function.Consumer;
 // only. MultiBufferSource and BlockRenderDispatcher are gone here, so geometry is meshed by hand per layer
 public final class GpuPreviewRenderer implements PreviewRenderer
 {
-	private static final int CLEAR_COLOR = 0xFF10151A;
-
 	private static final float Z_NEAR = 0.05F;
+	private static final long SLOW_SORT_MS = 8L;
 
 	private static final int RENDER_WIDTH = 1920;
 	private static final int RENDER_HEIGHT = 1080;
@@ -113,12 +112,14 @@ public final class GpuPreviewRenderer implements PreviewRenderer
 	private @Nullable ByteBufferBuilder sortScratch;
 
 	// Only the camera moves between frames, so geometry is meshed and uploaded once per model and cutaway
-	// layer. Translucent is sorted at mesh time; a stale sort while orbiting is the accepted tradeoff
-	private record CachedGeometry(GpuBuffer vbo, int indexCount) {}
+	// layer. Translucent keeps its quad centroids and is re-sorted, as vanilla does, when the eye changes block
+	private record CachedGeometry(GpuBuffer vbo, int indexCount, MeshData.@Nullable SortState sort) {}
 
 	private final EnumMap<ChunkSectionLayer, CachedGeometry> geometryCache = new EnumMap<>(ChunkSectionLayer.class);
 	private @Nullable SchematicPreview.Model cacheModel;
 	private int cacheLayerCeiling = Integer.MIN_VALUE;
+	private @Nullable GpuBuffer sortedIndices;
+	private @Nullable BlockPos sortedEye;
 
 	@Override
 	public String id()
@@ -176,7 +177,9 @@ public final class GpuPreviewRenderer implements PreviewRenderer
 
 		try
 		{
+			long started = System.nanoTime();
 			draw(model, view, capture, null);
+			SchematicIndexMod.LOGGER.debug("Drew a {}x{} capture in {} ms", RENDER_WIDTH, RENDER_HEIGHT, elapsedMs(started));
 			device.createCommandEncoder().copyTextureToBuffer(capture.getColorTexture(), readback, 0L,
 					() -> sink.accept(readPixels(readback, capture)), 0);
 		}
@@ -246,7 +249,6 @@ public final class GpuPreviewRenderer implements PreviewRenderer
 			@Nullable Identifier id)
 	{
 		Minecraft client = Minecraft.getInstance();
-		PreviewLevel level = new PreviewLevel(model);
 
 		double yaw = Math.toRadians(view.yaw());
 		double pitch = Math.toRadians(view.pitch());
@@ -316,7 +318,7 @@ public final class GpuPreviewRenderer implements PreviewRenderer
 			GpuDevice device = RenderSystem.getDevice();
 			CommandEncoder encoder = device.createCommandEncoder();
 
-			encoder.clearColorAndDepthTextures(fbo.getColorTexture(), CLEAR_COLOR,
+			encoder.clearColorAndDepthTextures(fbo.getColorTexture(), view.background(),
 					fbo.getDepthTexture(), 1.0D); // normal-Z: far = 1.0
 
 			RenderSystem.backupProjectionMatrix();
@@ -335,11 +337,15 @@ public final class GpuPreviewRenderer implements PreviewRenderer
 					? model.sizeY()
 					: Math.max(1, Math.round(view.maxLayer() * model.sizeY()));
 
-			if (this.cacheModel != model || this.cacheLayerCeiling != layerCeiling || this.geometryCache.isEmpty())
+			// Keyed on model and layers alone: a build with no meshable faces must not re-mesh every frame
+			if (this.cacheModel != model || this.cacheLayerCeiling != layerCeiling)
 			{
-				rebuildGeometryCache(model, level, layerCeiling, device, eyeX, eyeY, eyeZ);
+				String reason = this.cacheModel != model ? "model" : "layer cut";
+				long started = System.nanoTime();
+				rebuildGeometryCache(model, layerCeiling, device);
 				this.cacheModel = model;
 				this.cacheLayerCeiling = layerCeiling;
+				SchematicIndexMod.LOGGER.debug("Re-meshed the preview for a new {} in {} ms", reason, elapsedMs(started));
 			}
 
 			GpuTextureView atlasView = client.getTextureManager().getTexture(TextureAtlas.LOCATION_BLOCKS).getTextureView();
@@ -354,6 +360,8 @@ public final class GpuPreviewRenderer implements PreviewRenderer
 			GpuBufferSlice chunkFixSlice = this.chunkFix.getCurrentBuffer().slice();
 
 			RenderSystem.AutoStorageIndexBuffer indices = RenderSystem.getSequentialBuffer(VertexFormat.Mode.QUADS);
+
+			resortTranslucent(device, eyeX, eyeY, eyeZ);
 
 			if (!this.geometryCache.isEmpty())
 			{
@@ -374,12 +382,14 @@ public final class GpuPreviewRenderer implements PreviewRenderer
 
 						if (cached != null)
 						{
-							GpuBuffer ibo = indices.getBuffer(cached.indexCount());
+							boolean sorted = cached.sort() != null && this.sortedIndices != null;
+							GpuBuffer ibo = sorted ? this.sortedIndices : indices.getBuffer(cached.indexCount());
+							VertexFormat.IndexType indexType = sorted ? cached.sort().indexType() : indices.type();
 							RenderPass.Draw<GpuBufferSlice[]> draw = new RenderPass.Draw<>(0, cached.vbo(), ibo,
-									indices.type(), 0, cached.indexCount(), 0,
+									indexType, 0, cached.indexCount(), 0,
 									(slices, uploader) -> uploader.upload("DynamicTransforms", ((GpuBufferSlice[]) slices)[0]));
 							pass.setPipeline(legacyPipeline(layer));
-							pass.drawMultipleIndexed(List.of(draw), ibo, indices.type(),
+							pass.drawMultipleIndexed(List.of(draw), ibo, indexType,
 									List.of("DynamicTransforms"), transforms);
 						}
 					}
@@ -415,17 +425,17 @@ public final class GpuPreviewRenderer implements PreviewRenderer
 		return this.projBufferField;
 	}
 
-	private void rebuildGeometryCache(SchematicPreview.Model model, PreviewLevel level, int layerCeiling,
-			GpuDevice device, double eyeX, double eyeY, double eyeZ)
+	private void rebuildGeometryCache(SchematicPreview.Model model, int layerCeiling, GpuDevice device)
 	{
 		for (CachedGeometry cached : this.geometryCache.values())
 		{
 			cached.vbo().close();
 		}
 		this.geometryCache.clear();
+		closeSortedIndices();
 
 		EnumMap<ChunkSectionLayer, BufferBuilder> builders = new EnumMap<>(ChunkSectionLayer.class);
-		meshBlocks(model, level, layerCeiling, builders);
+		meshBlocks(model, new PreviewLevel(model, layerCeiling), layerCeiling, builders);
 
 		for (Map.Entry<ChunkSectionLayer, BufferBuilder> entry : builders.entrySet())
 		{
@@ -439,22 +449,76 @@ public final class GpuPreviewRenderer implements PreviewRenderer
 
 			try
 			{
-				if (layer == ChunkSectionLayer.TRANSLUCENT)
-				{
-					mesh.sortQuads(this.sortScratch,
-							VertexSorting.byDistance((float) eyeX, (float) eyeY, (float) eyeZ));
-				}
+				MeshData.SortState sort = layer == ChunkSectionLayer.TRANSLUCENT
+						? mesh.sortQuads(this.sortScratch, VertexSorting.DISTANCE_TO_ORIGIN)
+						: null;
 
 				int indexCount = mesh.drawState().indexCount();
 				GpuBuffer vbo = device.createBuffer(() -> "schematicindex-preview/" + layer.label(),
 						GpuBuffer.USAGE_VERTEX | GpuBuffer.USAGE_COPY_DST, mesh.vertexBuffer());
-				this.geometryCache.put(layer, new CachedGeometry(vbo, indexCount));
+				this.geometryCache.put(layer, new CachedGeometry(vbo, indexCount, sort));
 			}
 			finally
 			{
 				mesh.close();
 			}
 		}
+	}
+
+	private void resortTranslucent(GpuDevice device, double eyeX, double eyeY, double eyeZ)
+	{
+		CachedGeometry translucent = this.geometryCache.get(ChunkSectionLayer.TRANSLUCENT);
+
+		if (translucent == null || translucent.sort() == null)
+		{
+			return;
+		}
+
+		BlockPos eye = BlockPos.containing(eyeX, eyeY, eyeZ);
+
+		if (this.sortedIndices != null && eye.equals(this.sortedEye))
+		{
+			return;
+		}
+
+		long started = System.nanoTime();
+
+		try (ByteBufferBuilder.Result sorted = translucent.sort().buildSortedIndexBuffer(this.sortScratch,
+				VertexSorting.byDistance((float) eyeX, (float) eyeY, (float) eyeZ)))
+		{
+			if (sorted == null)
+			{
+				return;
+			}
+
+			closeSortedIndices();
+			this.sortedIndices = device.createBuffer(() -> "schematicindex-preview/translucent-indices",
+					GpuBuffer.USAGE_INDEX | GpuBuffer.USAGE_COPY_DST, sorted.byteBuffer());
+			this.sortedEye = eye;
+		}
+
+		long ms = elapsedMs(started);
+
+		if (ms >= SLOW_SORT_MS)
+		{
+			SchematicIndexMod.LOGGER.debug("Re-sorted translucent preview faces in {} ms", ms);
+		}
+	}
+
+	private static long elapsedMs(long startedNanos)
+	{
+		return (System.nanoTime() - startedNanos) / 1_000_000L;
+	}
+
+	private void closeSortedIndices()
+	{
+		if (this.sortedIndices != null)
+		{
+			this.sortedIndices.close();
+			this.sortedIndices = null;
+		}
+
+		this.sortedEye = null;
 	}
 
 	private void meshBlocks(SchematicPreview.Model model, PreviewLevel level, int layerCeiling,
@@ -769,7 +833,10 @@ public final class GpuPreviewRenderer implements PreviewRenderer
 
 		if (this.target == null)
 		{
+			long started = System.nanoTime();
 			this.target = new TextureTarget("schematicindex-preview", RENDER_WIDTH, RENDER_HEIGHT, true);
+			SchematicIndexMod.LOGGER.debug("Allocated the {}x{} preview target in {} ms", RENDER_WIDTH, RENDER_HEIGHT,
+					elapsedMs(started));
 		}
 
 		if (this.fogRenderer == null)
@@ -802,7 +869,7 @@ public final class GpuPreviewRenderer implements PreviewRenderer
 
 		if (this.modelRenderer == null)
 		{
-			this.modelRenderer = new ModelBlockRenderer(true, false, client.getBlockColors());
+			this.modelRenderer = new ModelBlockRenderer(true, true, client.getBlockColors());
 			this.blockModels = client.getModelManager().getBlockStateModelSet();
 			this.fluidRenderer = new FluidRenderer(
 					client.getModelManager().getFluidStateModelSet());
@@ -837,6 +904,7 @@ public final class GpuPreviewRenderer implements PreviewRenderer
 			cached.vbo().close();
 		}
 		this.geometryCache.clear();
+		closeSortedIndices();
 		this.cacheModel = null;
 		this.cacheLayerCeiling = Integer.MIN_VALUE;
 

@@ -161,7 +161,7 @@ public class CollectionMenu
 
 				if (this.screen.page == IndexScreen.Page.SAVED)
 				{
-					this.screen.refilter();
+					this.screen.browsePage.refilter();
 				}
 
 				return true;

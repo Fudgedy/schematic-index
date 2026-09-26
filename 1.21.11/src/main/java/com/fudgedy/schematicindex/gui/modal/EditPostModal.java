@@ -1,6 +1,6 @@
 package com.fudgedy.schematicindex.gui.modal;
 
-import com.fudgedy.schematicindex.Errors;
+import com.fudgedy.schematicindex.SchematicIndexMod;
 import com.fudgedy.schematicindex.catalogue.Backend;
 import com.fudgedy.schematicindex.catalogue.Catalogue;
 import com.fudgedy.schematicindex.catalogue.Category;
@@ -10,7 +10,9 @@ import com.fudgedy.schematicindex.gui.IndexScreen;
 import com.fudgedy.schematicindex.gui.Theme;
 import com.fudgedy.schematicindex.gui.Toasts;
 import com.fudgedy.schematicindex.gui.UploaderAccess;
+import com.fudgedy.schematicindex.gui.page.FormFields;
 import com.fudgedy.schematicindex.gui.widget.Buttons;
+import com.fudgedy.schematicindex.gui.widget.Dropdown;
 import com.fudgedy.schematicindex.gui.widget.Fields;
 import com.fudgedy.schematicindex.gui.widget.ModalChrome;
 import com.fudgedy.schematicindex.gui.widget.Rect;
@@ -22,27 +24,37 @@ import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.components.MultiLineEditBox;
 import net.minecraft.client.input.KeyEvent;
 import net.minecraft.client.input.MouseButtonEvent;
-import net.minecraft.network.chat.Component;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import org.jetbrains.annotations.Nullable;
 
+// Mirrors the upload form's text fields; the server's edit route takes text and category only, so pictures stay put
 public class EditPostModal
 {
+	private static final int WIDTH = 440;
+	private static final int PREVIEW_WIDTH = 120;
+	private static final int MIN_DESCRIPTION_HEIGHT = 28;
+	private static final String PREVIEW_ID = "edit-preview";
 	private final IndexScreen screen;
 	private EditBox titleBox;
 	private EditBox thumbnailBox;
 	private EditBox designerBox;
 	private MultiLineEditBox descriptionBox;
 	private boolean open;
+	private long openedAt;
 	private @Nullable String postId;
+	private @Nullable SchematicEntry entry;
+	private @Nullable SchematicEntry preview;
 	// Set only by the staff hook: any post, submitted through the session rather than an upload code
 	private boolean staffEdit;
+	private boolean saving;
 	private Category category = Category.FARMS;
-	private String status = "";
+	private final EditPostMessages messages = new EditPostMessages();
+	private final Dropdown categoryDropdown = new Dropdown();
 	private final Rect categoryButton = new Rect();
 	private final Rect save = new Rect();
 	private final Rect cancel = new Rect();
+	private final Rect close = new Rect();
 	private final Rect bounds = new Rect();
 	private final Rect descriptionBounds = new Rect();
 
@@ -59,46 +71,30 @@ public class EditPostModal
 	// Screen.init clears the widget list, so the boxes are rebuilt and re-registered on every resize
 	public void buildFields()
 	{
-		this.titleBox = this.screen.textField(0, 0, 100, "Schematic name",
+		this.titleBox = FormFields.textField(this.screen, 0, 0, 100, "Schematic name",
 				this.titleBox == null ? "" : this.titleBox.getValue());
-		this.thumbnailBox = this.screen.textField(0, 0, 100, "Thumbnail name",
+		this.thumbnailBox = FormFields.textField(this.screen, 0, 0, 100, "Thumbnail name",
 				this.thumbnailBox == null ? "" : this.thumbnailBox.getValue());
-		this.designerBox = this.screen.textField(0, 0, 100, "Designed by",
+		this.designerBox = FormFields.textField(this.screen, 0, 0, 100, "Designed by",
 				this.designerBox == null ? "" : this.designerBox.getValue());
-
-		String description = this.descriptionBox == null ? "" : this.descriptionBox.getValue();
-		this.descriptionBox = MultiLineEditBox.builder()
-				.setPlaceholder(Component.literal("Description"))
-				.setTextColor(Theme.TEXT)
-				.setTextShadow(false)
-				.setShowBackground(false)
-				.setShowDecorations(false)
-				.build(this.screen.font(), 100, 60, Component.literal("Description"));
-		this.descriptionBox.setCharacterLimit(IndexScreen.DESC_CHAR_LIMIT);
-		this.descriptionBox.setValue(description);
-		this.screen.addModalWidget(this.descriptionBox);
+		this.titleBox.setMaxLength(EditPostMessages.TITLE_LIMIT);
+		this.thumbnailBox.setMaxLength(EditPostMessages.THUMBNAIL_LIMIT);
+		this.designerBox.setMaxLength(EditPostMessages.DESIGNER_LIMIT);
+		this.descriptionBox = FormFields.multiline(this.screen, 100, IndexScreen.DESC_FIELD_HEIGHT,
+				this.descriptionBox == null ? "" : this.descriptionBox.getValue());
 	}
 
 	public void open(String id)
 	{
-		SchematicEntry entry = null;
-
-		for (SchematicEntry e : this.screen.myPosts)
+		for (SchematicEntry candidate : this.screen.dashboardPage.stats.posts)
 		{
-			if (e.id().equals(id))
+			if (candidate.id().equals(id))
 			{
-				entry = e;
-				break;
+				this.staffEdit = false;
+				this.fill(candidate);
+				return;
 			}
 		}
-
-		if (entry == null)
-		{
-			return;
-		}
-
-		this.staffEdit = false;
-		this.fill(entry);
 	}
 
 	// Reached only through the staff hook, so the community jar has no caller for it
@@ -121,61 +117,72 @@ public class EditPostModal
 		}
 
 		Font font = this.screen.font();
-		ctx.fill(0, 0, this.screen.width, this.screen.height, Theme.SCRIM);
-
-		int pad = 16;
-		int cardWidth = Math.min(this.screen.width - 40, 420);
 		int line = font.lineHeight;
-		int fieldGap = 8;
-		int descHeight = IndexScreen.DESC_FIELD_HEIGHT;
-		int cardHeight = pad + line + 10
-				+ (IndexScreen.FIELD_HEIGHT + fieldGap) * 3
-				+ line + 2 + descHeight + fieldGap
-				+ IndexScreen.FIELD_HEIGHT + 6
-				+ IndexScreen.FIELD_HEIGHT + 6 + line + pad;
-		int x = (this.screen.width - cardWidth) / 2;
-		int y = (this.screen.height - cardHeight) / 2;
-		this.bounds.set(x, y, cardWidth, cardHeight);
+		int labelH = line + Theme.SPACE_XS;
+		int group = labelH + Theme.H_CONTROL + Theme.SPACE_L;
+		int chrome = Theme.SPACE_M + Theme.ICON_M + Theme.SPACE_S + group * 3 + labelH + Theme.SPACE_L
+				+ Theme.H_CONTROL + Theme.SPACE_L;
+		int descriptionH = Math.max(MIN_DESCRIPTION_HEIGHT,
+				Math.min(IndexScreen.DESC_FIELD_HEIGHT, this.screen.height - Theme.SPACE_L * 2 - chrome));
 
-		ModalChrome.frame(ctx, x, y, cardWidth, cardHeight, false);
-		Theme.text(ctx, font, Theme.bold("Edit post"), x + pad, y + pad, Theme.TEXT);
+		ModalChrome.open(ctx, font, this.bounds, this.screen.width, this.screen.height, WIDTH, chrome + descriptionH,
+				"Edit post", null, this.close, this.openedAt, mouseX, mouseY);
+		int x = this.bounds.x;
+		int y = this.bounds.y;
+		int w = this.bounds.width;
 
-		int fx = x + pad;
-		int fw = cardWidth - pad * 2;
-		int fy = y + pad + line + 10;
+		int rightW = Math.min(PREVIEW_WIDTH, (w - Theme.SPACE_L * 3) / 3);
+		int leftX = x + Theme.SPACE_L;
+		int leftW = w - Theme.SPACE_L * 3 - rightW;
+		int rightX = leftX + leftW + Theme.SPACE_L;
+		int top = y + Theme.SPACE_M + Theme.ICON_M + Theme.SPACE_S;
+		int fy = top;
 
-		Fields.single(ctx, this.titleBox, fx, fy, fw, IndexScreen.FIELD_HEIGHT, mouseX, mouseY, partialTick);
-		fy += IndexScreen.FIELD_HEIGHT + fieldGap;
-		Fields.single(ctx, this.thumbnailBox, fx, fy, fw, IndexScreen.FIELD_HEIGHT, mouseX, mouseY, partialTick);
-		fy += IndexScreen.FIELD_HEIGHT + fieldGap;
-		Fields.single(ctx, this.designerBox, fx, fy, fw, IndexScreen.FIELD_HEIGHT, mouseX, mouseY, partialTick);
-		fy += IndexScreen.FIELD_HEIGHT + fieldGap;
+		Fields.label(ctx, font, "Schematic name", "on the post page", leftX, fy, leftW);
+		Fields.single(ctx, this.titleBox, leftX, fy + labelH, leftW, Theme.H_CONTROL, mouseX, mouseY, partialTick);
+		Fields.error(ctx, font, this.messages.title, leftX, fy + labelH, leftW, Theme.H_CONTROL);
+		fy += group;
+		Fields.label(ctx, font, "Thumbnail name", "on the card", leftX, fy, leftW);
+		Fields.single(ctx, this.thumbnailBox, leftX, fy + labelH, leftW, Theme.H_CONTROL, mouseX, mouseY, partialTick);
+		Fields.error(ctx, font, this.messages.thumbnail, leftX, fy + labelH, leftW, Theme.H_CONTROL);
+		fy += group;
+		Fields.label(ctx, font, "Designed by", "", leftX, fy, leftW);
+		Fields.single(ctx, this.designerBox, leftX, fy + labelH, leftW, Theme.H_CONTROL, mouseX, mouseY, partialTick);
+		Fields.error(ctx, font, this.messages.designer, leftX, fy + labelH, leftW, Theme.H_CONTROL);
+		fy += group;
 
-		this.descriptionBox = this.screen.ensureMultiline(this.descriptionBox, fw, descHeight);
-		Theme.text(ctx, font, "Description", fx, fy, Theme.TEXT_ASH);
-		String editCount = this.descriptionBox.getValue().length() + " / " + IndexScreen.DESC_CHAR_LIMIT;
-		Theme.text(ctx, font, editCount, fx + fw - font.width(editCount), fy, Theme.TEXT_ASH);
-		fy += line + 2;
-		Fields.multiline(ctx, this.descriptionBox, this.descriptionBounds, fx, fy, fw, descHeight,
+		this.descriptionBox = FormFields.ensureMultiline(this.screen, this.descriptionBox, leftW, descriptionH);
+		Fields.label(ctx, font, "Description", this.descriptionBox.getValue().length() + " / " + IndexScreen.DESC_CHAR_LIMIT,
+				leftX, fy, leftW);
+		fy += labelH;
+		Fields.multiline(ctx, this.descriptionBox, this.descriptionBounds, leftX, fy, leftW, descriptionH,
 				mouseX, mouseY, partialTick);
-		fy += descHeight + fieldGap;
+		Fields.error(ctx, font, this.messages.description, leftX, fy, leftW, descriptionH);
 
-		this.categoryButton.set(fx, fy, fw, IndexScreen.FIELD_HEIGHT);
-		Buttons.pill(ctx, font, this.categoryButton, "Category: " + this.category.label(), mouseX, mouseY, false);
-		fy += IndexScreen.FIELD_HEIGHT + 6;
+		int ry = top;
+		Fields.label(ctx, font, "Preview", "", rightX, ry, rightW);
+		ry += labelH;
+		ry = this.renderPreview(ctx, rightX, ry, rightW) + Theme.SPACE_L;
+		Fields.label(ctx, font, "Category", "", rightX, ry, rightW);
+		this.categoryButton.set(rightX, ry + labelH, rightW, Theme.H_CONTROL);
+		this.categoryDropdown.render(ctx, font, this.categoryButton, Category.tagLabels(), Category.tagIndex(this.category),
+				mouseX, mouseY);
 
-		int cancelWidth = font.width(Theme.bold("Cancel")) + 20;
-		int saveWidth = font.width(Theme.bold("Save")) + 20;
-		this.cancel.set(fx, fy, cancelWidth, IndexScreen.FIELD_HEIGHT);
-		this.save.set(x + cardWidth - pad - saveWidth, fy, saveWidth, IndexScreen.FIELD_HEIGHT);
-		Buttons.pill(ctx, font, this.cancel, "Cancel", mouseX, mouseY, false);
-		Buttons.pill(ctx, font, this.save, "Save", mouseX, mouseY, true);
-		fy += IndexScreen.FIELD_HEIGHT + 6;
+		int buttonY = y + this.bounds.height - Theme.SPACE_L - Theme.H_CONTROL;
+		int buttonW = Math.max(Buttons.width(font, "Cancel"), Buttons.width(font, "Save"));
+		this.save.set(x + w - Theme.SPACE_L - buttonW, buttonY, buttonW, Theme.H_CONTROL);
+		this.cancel.set(this.save.x - Theme.SPACE_S - buttonW, buttonY, buttonW, Theme.H_CONTROL);
+		Buttons.button(ctx, font, this.cancel, "Cancel", Buttons.Kind.SECONDARY, true, mouseX, mouseY);
+		Buttons.button(ctx, font, this.save, this.saving ? "..." : "Save", Buttons.Kind.PRIMARY, !this.saving,
+				mouseX, mouseY);
 
-		if (!this.status.isEmpty())
+		if (!this.messages.status.isEmpty())
 		{
-			Theme.text(ctx, font, Theme.clip(font, this.status, fw), fx, fy, Theme.ACCENT_BRIGHT);
+			Theme.text(ctx, font, Theme.clip(font, this.messages.status, this.cancel.x - Theme.SPACE_S - leftX), leftX,
+					buttonY + (Theme.H_CONTROL - line) / 2 + 1, this.messages.isError ? Theme.DANGER_TEXT : Theme.TEXT_ASH);
 		}
+
+		this.categoryDropdown.renderOpen(ctx, font, mouseX, mouseY, this.screen.height);
 	}
 
 	public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick, double mouseX, double mouseY)
@@ -185,23 +192,33 @@ public class EditPostModal
 			return false;
 		}
 
+		int picked = this.categoryDropdown.click(mouseX, mouseY);
+
+		if (picked >= 0)
+		{
+			this.category = Category.tags()[picked];
+			return true;
+		}
+
+		if (picked == Dropdown.TOGGLED)
+		{
+			return true;
+		}
+
 		if (this.save.contains(mouseX, mouseY))
 		{
-			Theme.click(1.1F);
-			this.screen.setFocused(null);
-			this.confirm();
+			if (!this.saving)
+			{
+				Theme.click(1.1F);
+				this.screen.setFocused(null);
+				this.confirm();
+			}
 		}
-		else if (this.cancel.contains(mouseX, mouseY) || !this.bounds.contains(mouseX, mouseY))
+		else if (this.cancel.contains(mouseX, mouseY) || this.close.contains(mouseX, mouseY)
+				|| !this.bounds.contains(mouseX, mouseY))
 		{
 			Theme.click(0.9F);
-			this.open = false;
-			this.postId = null;
-			this.screen.setFocused(null);
-		}
-		else if (this.categoryButton.contains(mouseX, mouseY))
-		{
-			Theme.click();
-			this.category = Category.next(this.category.name());
+			this.dismiss();
 		}
 		else if (this.descriptionBounds.contains(mouseX, mouseY))
 		{
@@ -211,9 +228,9 @@ public class EditPostModal
 		}
 		else
 		{
-			this.screen.focusField(this.titleBox, event, doubleClick, mouseX, mouseY);
-			this.screen.focusField(this.thumbnailBox, event, doubleClick, mouseX, mouseY);
-			this.screen.focusField(this.designerBox, event, doubleClick, mouseX, mouseY);
+			FormFields.focusField(this.screen, this.titleBox, event, doubleClick, mouseX, mouseY);
+			FormFields.focusField(this.screen, this.thumbnailBox, event, doubleClick, mouseX, mouseY);
+			FormFields.focusField(this.screen, this.designerBox, event, doubleClick, mouseX, mouseY);
 		}
 
 		return true;
@@ -236,27 +253,110 @@ public class EditPostModal
 
 	public boolean keyPressed(KeyEvent event)
 	{
-		if (!this.open || event.key() != 256)
+		if (!this.open)
 		{
 			return false;
 		}
 
+		if (event.key() == 256)
+		{
+			if (this.categoryDropdown.isOpen())
+			{
+				this.categoryDropdown.close();
+				return true;
+			}
+
+			this.dismiss();
+			return true;
+		}
+
+		boolean enter = event.key() == 257 || event.key() == 335;
+		boolean singleLine = this.titleBox.isFocused() || this.thumbnailBox.isFocused() || this.designerBox.isFocused();
+
+		if (enter && singleLine && !this.saving)
+		{
+			this.screen.setFocused(null);
+			this.confirm();
+			return true;
+		}
+
+		return false;
+	}
+
+	private int renderPreview(GuiGraphics ctx, int x, int y, int width)
+	{
+		SchematicEntry shown = this.previewEntry();
+
+		if (shown == null)
+		{
+			return y;
+		}
+
+		int savedWidth = this.screen.cardWidth;
+		int savedHeight = this.screen.cardHeight;
+		this.screen.cardWidth = width;
+		this.screen.cardHeight = IndexScreen.imageHeight(width) + IndexScreen.CAPTION_HEIGHT;
+
+		// An exception mid-render must not leave the shared grid card size corrupted for later frames
+		try
+		{
+			this.screen.browsePage.grid.renderCard(ctx, shown, x, y, -999, -999);
+			return y + this.screen.cardHeight;
+		}
+		finally
+		{
+			this.screen.cardWidth = savedWidth;
+			this.screen.cardHeight = savedHeight;
+		}
+	}
+
+	private @Nullable SchematicEntry previewEntry()
+	{
+		if (this.entry == null)
+		{
+			return null;
+		}
+
+		String title = this.titleBox.getValue().trim();
+		String thumbnail = this.thumbnailBox.getValue().trim();
+		String designer = this.designerBox.getValue().trim();
+		SchematicEntry last = this.preview;
+
+		if (last != null && last.title().equals(title) && last.thumbnailName().equals(thumbnail)
+				&& last.designer().equals(designer) && last.category() == this.category)
+		{
+			return last;
+		}
+
+		this.preview = this.entry.asPreview(PREVIEW_ID, title, thumbnail, designer, this.category);
+		return this.preview;
+	}
+
+	private void dismiss()
+	{
 		this.open = false;
 		this.postId = null;
+		this.entry = null;
+		this.preview = null;
+		this.categoryDropdown.close();
 		this.screen.setFocused(null);
-		return true;
 	}
 
 	private void fill(SchematicEntry entry)
 	{
 		String id = entry.id();
 		this.open = true;
+		this.openedAt = System.currentTimeMillis();
 		this.postId = id;
-		this.status = "";
-		this.category = entry.category();
-		this.screen.fillEditField(this.titleBox, entry.title());
-		this.screen.fillEditField(this.thumbnailBox, entry.thumbnailName() == null ? "" : entry.thumbnailName());
-		this.screen.fillEditField(this.designerBox, entry.designer() == null ? "" : entry.designer());
+		this.entry = entry;
+		this.preview = null;
+		this.saving = false;
+		this.messages.clear();
+		this.category = entry.category() == Category.ALL ? Category.tags()[0] : entry.category();
+		this.categoryDropdown.close();
+		FormFields.fillEditField(this.titleBox, entry.title());
+		FormFields.fillEditField(this.thumbnailBox, entry.thumbnailName() == null ? "" : entry.thumbnailName());
+		FormFields.fillEditField(this.designerBox, entry.designer() == null ? "" : entry.designer());
 		this.descriptionBox.setValue(entry.description() == null ? "" : entry.description());
 		this.screen.setFocused(null);
 		this.loadDetails(id);
@@ -294,7 +394,7 @@ public class EditPostModal
 
 				if (this.designerBox.getValue().equals(designerBaseline))
 				{
-					this.screen.fillEditField(this.designerBox, designer);
+					FormFields.fillEditField(this.designerBox, designer);
 				}
 
 				if (this.descriptionBox.getValue().equals(descriptionBaseline))
@@ -317,82 +417,63 @@ public class EditPostModal
 			return;
 		}
 
-		if (code == null && !this.staffEdit)
+		if (!UploaderAccess.unlocked() && !this.staffEdit)
 		{
-			this.status = "Your upload code was signed out. Unlock it again to edit.";
+			this.messages.fail("Verify your account first, then save again.");
 			return;
 		}
 
 		String title = this.titleBox.getValue().trim();
-
-		if (title.isEmpty())
-		{
-			this.status = "A title is required.";
-			return;
-		}
-
-		this.status = "Saving...";
 		String thumbnail = this.thumbnailBox.getValue().trim();
 		String designer = this.designerBox.getValue().trim();
 		String description = this.descriptionBox.getValue().trim();
-		String category = this.category.name();
+		Category chosen = this.category;
+		String category = chosen.name();
 
+		if (!this.messages.validate(title, thumbnail, designer, description))
+		{
+			return;
+		}
+
+		this.saving = true;
+		this.messages.status = "Saving...";
 		boolean viaStaff = this.staffEdit;
+		SchematicIndexMod.LOGGER.debug("Saving edit to post {}", id);
 		Thread worker = new Thread(() -> {
 			Backend.ApiResult result = viaStaff
 					? this.staffEdit(id, title, thumbnail, designer, description, category)
 					: Backend.editPost(code, id, title, thumbnail, designer, description, category);
 			Minecraft.getInstance().execute(() -> {
+				// Closing the modal mid-save does not undo the save, so success still refreshes and toasts
+				boolean current = id.equals(this.postId);
+
 				if (result.ok())
 				{
-					this.open = false;
-					this.postId = null;
-					this.screen.myStatsLoaded = false;
-					Catalogue.refresh();
+					if (current)
+					{
+						this.dismiss();
+					}
+
+					this.screen.dashboardPage.stats.refresh();
+					Catalogue.applyEdit(id, title, thumbnail, designer, description, chosen);
+					this.screen.detailView.applyEdit(id, title, thumbnail, designer, description, chosen);
+					Catalogue.revalidate();
 					Toasts.push("Post updated", title, new ItemStack(Items.WRITABLE_BOOK));
 					return;
 				}
 
-				this.status = refusal(result, viaStaff);
+				if (!current)
+				{
+					return;
+				}
+
+				this.saving = false;
+				SchematicIndexMod.LOGGER.debug("Edit to post {} refused with {}", id, result.status());
+				this.messages.refuse(result, viaStaff);
 			});
 		}, "schematicindex-edit");
 		worker.setDaemon(true);
 		worker.start();
-	}
-
-	// The server's own message for a field it rejected; every other refusal gets a reason and a code
-	private static String refusal(Backend.ApiResult result, boolean viaStaff)
-	{
-		String message = result.message();
-
-		if (result.status() == 400 && message != null)
-		{
-			return message;
-		}
-
-		if (result.unverified())
-		{
-			return "Verify your account first, then save again.";
-		}
-
-		if (result.is("bad_code"))
-		{
-			return "Your upload code was refused. Unlock it again to edit.";
-		}
-
-		if (result.is("not_staff") || result.is("not_owner"))
-		{
-			return "Could not save: this account is no longer staff. (" + Errors.STAFF_DENIED + ")";
-		}
-
-		if (result.status() == 404)
-		{
-			return "Could not save: this post is not yours to edit.";
-		}
-
-		String code = viaStaff ? Errors.STAFF_ACTION : Errors.POST_EDIT;
-		Errors.report(code);
-		return "Could not save. Try again. (" + code + ")";
 	}
 
 	private Backend.ApiResult staffEdit(String id, String title, String thumbnail, String designer, String description,

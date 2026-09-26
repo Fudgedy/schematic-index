@@ -9,8 +9,78 @@ import net.minecraft.client.gui.GuiGraphicsExtractor;
 
 public final class Buttons
 {
+	public enum Kind
+	{
+		PRIMARY,
+		SECONDARY,
+		GHOST,
+		DANGER
+	}
+
 	private Buttons()
 	{
+	}
+
+	public static int width(Font font, String label)
+	{
+		return Math.max(Theme.BUTTON_MIN_WIDTH, font.width(Theme.bold(label)) + Theme.BUTTON_PAD_X * 2);
+	}
+
+	public static int priceWidth(Font font, String label, int amount)
+	{
+		int content = font.width(Theme.bold(label)) + Theme.SPACE_S + Theme.ICON_S + Theme.SPACE_2XS
+				+ font.width(Theme.bold(Theme.count(amount)));
+		return Math.max(Theme.BUTTON_MIN_WIDTH, content + Theme.BUTTON_PAD_X * 2);
+	}
+
+	public static void button(GuiGraphicsExtractor ctx, Font font, Rect rect, String label, Kind kind, boolean enabled,
+			int mouseX, int mouseY)
+	{
+		int color = background(ctx, rect, kind, enabled, mouseX, mouseY);
+		String text = Theme.bold(Theme.clipBold(font, label, rect.width - Theme.BUTTON_PAD_X * 2));
+		Theme.text(ctx, font, text, rect.x + (rect.width - font.width(text)) / 2, labelY(font, rect), color);
+	}
+
+	// Label, shard, amount; currency purple never sits on the green fill, so a primary price goes white
+	public static void price(GuiGraphicsExtractor ctx, Font font, Rect rect, String label, int amount, Kind kind,
+			boolean enabled, int mouseX, int mouseY)
+	{
+		int color = background(ctx, rect, kind, enabled, mouseX, mouseY);
+		String name = Theme.bold(label);
+		String cost = Theme.bold(Theme.count(amount));
+		int content = font.width(name) + Theme.SPACE_S + Theme.ICON_S + Theme.SPACE_2XS + font.width(cost);
+		int x = rect.x + (rect.width - content) / 2;
+		int y = labelY(font, rect);
+		Theme.text(ctx, font, name, x, y, color);
+		x += font.width(name) + Theme.SPACE_S;
+		boolean onAccent = kind == Kind.PRIMARY;
+		Glyphs.shard(ctx, x, rect.y + (rect.height - Theme.ICON_S) / 2);
+		x += Theme.ICON_S + Theme.SPACE_2XS;
+		Theme.text(ctx, font, cost, x, y, !enabled ? Theme.TEXT_ASH : (onAccent ? Theme.ON_ACCENT : Theme.SHARD_TEXT));
+	}
+
+	public static int doneWidth(Font font, String label)
+	{
+		return Math.max(Theme.BUTTON_MIN_WIDTH, Theme.ICON_S + Theme.SPACE_XS + font.width(Theme.bold(label)) + Theme.BUTTON_PAD_X * 2);
+	}
+
+	// A settled action that keeps its place, like a claim already taken; no hover, no click
+	public static void done(GuiGraphicsExtractor ctx, Font font, Rect rect, String label)
+	{
+		Theme.roundedRect(ctx, rect.x, rect.y, rect.width, rect.height, Theme.RADIUS_PILL, Theme.SURFACE_ELEVATED);
+		int room = rect.width - Theme.BUTTON_PAD_X * 2 - Theme.ICON_S - Theme.SPACE_XS;
+		String text = Theme.bold(Theme.clipBold(font, label, room));
+		int x = rect.x + (rect.width - Theme.ICON_S - Theme.SPACE_XS - font.width(text)) / 2;
+		Glyphs.draw(ctx, Glyphs.CHECK, x, rect.y + (rect.height - Theme.ICON_S) / 2, Theme.SUCCESS);
+		Theme.text(ctx, font, text, x + Theme.ICON_S + Theme.SPACE_XS, labelY(font, rect), Theme.TEXT_MUTE);
+	}
+
+	// A 16px ghost square with the close cross, drawn inside the frame it closes
+	public static void close(GuiGraphicsExtractor ctx, Rect rect, int mouseX, int mouseY)
+	{
+		int color = background(ctx, rect, Kind.GHOST, true, mouseX, mouseY);
+		int size = Theme.ICON_S - Theme.SPACE_2XS;
+		Theme.cross(ctx, rect.x + (rect.width - size) / 2, rect.y + (rect.height - size) / 2, size, color);
 	}
 
 	public static void pill(GuiGraphicsExtractor ctx, Font font, Rect rect, String label, int mouseX, int mouseY,
@@ -28,14 +98,7 @@ public final class Buttons
 		float scale = Theme.buttonScale(rect, 1.0F + Theme.HOVER_SCALE * hover);
 
 		Theme.pushScale(ctx, rect.x, rect.y, rect.width, rect.height, scale);
-
-		int fill = Theme.lighten(primary ? Theme.ACCENT : Theme.SURFACE_CARD, 0.12F * hover);
-		Theme.roundedRect(ctx, rect.x, rect.y, rect.width, rect.height, Theme.RADIUS_PILL, fill);
-
-		if (hovered && !primary)
-		{
-			Theme.roundedOutline(ctx, rect.x, rect.y, rect.width, rect.height, Theme.RADIUS_PILL, Theme.ACCENT_BRIGHT);
-		}
+		pillBackground(ctx, rect, hovered, hover, primary);
 
 		String clipped = Theme.clip(font, label, rect.width - 8);
 		String text = bold ? Theme.bold(clipped) : clipped;
@@ -43,6 +106,29 @@ public final class Buttons
 				rect.x + (rect.width - font.width(text)) / 2,
 				rect.y + (rect.height - font.lineHeight) / 2 + 1,
 				primary ? Theme.ON_ACCENT : Theme.TEXT);
+
+		Theme.pop(ctx);
+	}
+
+	// Centred on the glyph's ink, not its advance with the trailing spacing pixel; the half-pixel
+	// translate splits an odd leftover evenly at any GUI scale above one
+	public static void glyph(GuiGraphicsExtractor ctx, Font font, Rect rect, String glyph, int mouseX, int mouseY,
+			boolean primary)
+	{
+		boolean hovered = rect.contains(mouseX, mouseY);
+		float hover = Theme.buttonHover(rect, hovered);
+		float scale = Theme.buttonScale(rect, 1.0F + Theme.HOVER_SCALE * hover);
+
+		Theme.pushScale(ctx, rect.x, rect.y, rect.width, rect.height, scale);
+		pillBackground(ctx, rect, hovered, hover, primary);
+
+		String text = Theme.bold(glyph);
+		int inkWidth = font.width(text) - 1;
+		int inkHeight = font.lineHeight - 2;
+		ctx.pose().pushMatrix();
+		ctx.pose().translate(rect.x + (rect.width - inkWidth) / 2.0F, rect.y + (rect.height - inkHeight) / 2.0F);
+		Theme.text(ctx, font, text, 0, 0, primary ? Theme.ON_ACCENT : Theme.TEXT);
+		ctx.pose().popMatrix();
 
 		Theme.pop(ctx);
 	}
@@ -90,7 +176,7 @@ public final class Buttons
 	{
 		boolean hover = rect.contains(mouseX, mouseY);
 		Theme.roundedRect(ctx, rect.x, rect.y, rect.width, rect.height, Theme.RADIUS_PILL,
-				hover ? 0xFFE05555 : 0xFFD64545);
+				hover ? 0xFFE05555 : Theme.DANGER);
 		String text = Theme.bold(label);
 		Theme.text(ctx, font, text, rect.x + (rect.width - font.width(text)) / 2,
 				rect.y + (rect.height - font.lineHeight) / 2 + 1, Theme.ON_ACCENT);
@@ -270,5 +356,65 @@ public final class Buttons
 				hovered ? Theme.SURFACE_ELEVATED : 0xCC0F1114);
 		Theme.arrow(ctx, rect.x + (rect.width - 4) / 2, rect.y + (rect.height - 7) / 2, left,
 				hovered ? Theme.ACCENT_BRIGHT : Theme.TEXT);
+	}
+
+	// Draws the fill for the kind and state and returns the label colour; hover and press only lerp colour
+	private static int background(GuiGraphicsExtractor ctx, Rect rect, Kind kind, boolean enabled, int mouseX, int mouseY)
+	{
+		if (!enabled)
+		{
+			Theme.roundedRect(ctx, rect.x, rect.y, rect.width, rect.height, Theme.RADIUS_PILL, Theme.SURFACE_CARD);
+			return Theme.TEXT_ASH;
+		}
+
+		float hover = Theme.buttonHover(rect, rect.contains(mouseX, mouseY), Theme.MOTION_HOVER_MS);
+		float press = Theme.pressAmount(rect, Theme.MOTION_PRESS_MS);
+
+		switch (kind)
+		{
+			case PRIMARY ->
+			{
+				int fill = Theme.mix(Theme.mix(Theme.ACCENT, Theme.ACCENT_HOVER, hover), Theme.ACCENT_PRESSED, press);
+				Theme.roundedRect(ctx, rect.x, rect.y, rect.width, rect.height, Theme.RADIUS_PILL, fill);
+				return Theme.ON_ACCENT;
+			}
+			case SECONDARY ->
+			{
+				int fill = Theme.mix(Theme.mix(Theme.SURFACE_ELEVATED, Theme.SURFACE_HOVER, hover), Theme.SURFACE_ELEVATED, press);
+				Theme.roundedRect(ctx, rect.x, rect.y, rect.width, rect.height, Theme.RADIUS_PILL, fill);
+				Theme.roundedOutline(ctx, rect.x, rect.y, rect.width, rect.height, Theme.RADIUS_PILL,
+						Theme.mix(Theme.HAIRLINE, Theme.HAIRLINE_STRONG, hover));
+				return Theme.TEXT;
+			}
+			case DANGER ->
+			{
+				Theme.roundedRect(ctx, rect.x, rect.y, rect.width, rect.height, Theme.RADIUS_PILL,
+						Theme.mix(Theme.DANGER_TINT, Theme.lighten(Theme.DANGER_TINT, 0.12F), hover * (1.0F - press)));
+				Theme.roundedOutline(ctx, rect.x, rect.y, rect.width, rect.height, Theme.RADIUS_PILL, Theme.DANGER);
+				return Theme.DANGER_TEXT;
+			}
+			default ->
+			{
+				int fill = Theme.mix(Theme.withAlpha(Theme.SURFACE_ELEVATED, 0.0F), Theme.SURFACE_ELEVATED, hover * (1.0F - press));
+				Theme.roundedRect(ctx, rect.x, rect.y, rect.width, rect.height, Theme.RADIUS_PILL, fill);
+				return Theme.mix(Theme.TEXT_MUTE, Theme.TEXT, hover);
+			}
+		}
+	}
+
+	private static int labelY(Font font, Rect rect)
+	{
+		return rect.y + (rect.height - font.lineHeight) / 2 + 1;
+	}
+
+	private static void pillBackground(GuiGraphicsExtractor ctx, Rect rect, boolean hovered, float hover, boolean primary)
+	{
+		int fill = Theme.lighten(primary ? Theme.ACCENT : Theme.SURFACE_CARD, 0.12F * hover);
+		Theme.roundedRect(ctx, rect.x, rect.y, rect.width, rect.height, Theme.RADIUS_PILL, fill);
+
+		if (hovered && !primary)
+		{
+			Theme.roundedOutline(ctx, rect.x, rect.y, rect.width, rect.height, Theme.RADIUS_PILL, Theme.ACCENT_BRIGHT);
+		}
 	}
 }

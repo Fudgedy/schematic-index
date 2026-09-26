@@ -1,6 +1,7 @@
 package com.fudgedy.schematicindex.catalogue;
 
 import com.fudgedy.schematicindex.Errors;
+import com.fudgedy.schematicindex.SchematicIndexMod;
 import com.fudgedy.schematicindex.gui.Theme;
 import com.fudgedy.schematicindex.gui.Toasts;
 import com.google.gson.JsonElement;
@@ -18,15 +19,30 @@ import java.util.Set;
 // bought with shards or handed out; a player never builds one, so nothing here edits a tag's own styling
 public final class CosmeticTags
 {
+	// Everything after description is the 0.8.0 shape; an older server leaves it at the defaults
 	public record Tag(int id, String label, String bracketOpen, String bracketClose, boolean gradient,
-			int[] colors, Set<String> styles, int price)
+			int[] colors, Set<String> styles, int price, int textColor, String description, String key, String kind,
+			boolean limited, long availableFrom, long untilMs, boolean vaulted, double rarity, String hint, int have,
+			int need, boolean pendingUnlock, long unlocksAt, List<String> actions)
 	{
+		public boolean hasRarity()
+		{
+			return this.rarity >= 0.0;
+		}
+
+		public boolean hasProgress()
+		{
+			return this.need > 0;
+		}
 	}
 
 	public static final int NONE = -1;
+	public static final int WHITE = 0xFFFFFF;
 
 	private static volatile List<Tag> owned = List.of();
 	private static volatile List<Tag> shop = List.of();
+	private static volatile List<Tag> locked = List.of();
+	private static volatile boolean loadFailed;
 	private static volatile int equipped = NONE;
 	private static volatile boolean loading;
 
@@ -42,6 +58,16 @@ public final class CosmeticTags
 	public static List<Tag> shop()
 	{
 		return shop;
+	}
+
+	public static List<Tag> locked()
+	{
+		return locked;
+	}
+
+	public static boolean loadFailed()
+	{
+		return loadFailed;
 	}
 
 	public static int equipped()
@@ -74,7 +100,10 @@ public final class CosmeticTags
 		{
 			try
 			{
-				apply(Backend.myTags());
+				JsonObject body = Backend.myTags();
+				loadFailed = body == null;
+				SchematicIndexMod.LOGGER.debug("GET /me/tags {}", body == null ? "failed" : "ok");
+				apply(body);
 			}
 			finally
 			{
@@ -87,6 +116,7 @@ public final class CosmeticTags
 	{
 		owned = List.of();
 		shop = List.of();
+		locked = List.of();
 		equipped = NONE;
 	}
 
@@ -109,7 +139,7 @@ public final class CosmeticTags
 			}
 			else
 			{
-				Minecraft.getInstance().execute(() -> Toasts.shopRefusal(result, "this tag", Errors.SHARD_BUY));
+				Minecraft.getInstance().execute(() -> refuseSale(result, "this tag"));
 			}
 		});
 	}
@@ -145,6 +175,11 @@ public final class CosmeticTags
 		if (o.has("shop") && o.get("shop").isJsonArray())
 		{
 			shop = readTags(o, "shop");
+		}
+
+		if (o.has("locked") && o.get("locked").isJsonArray())
+		{
+			locked = readTags(o, "locked");
 		}
 
 		if (o.has("equipped"))
@@ -184,12 +219,20 @@ public final class CosmeticTags
 		}
 
 		JsonObject row = element.getAsJsonObject();
+		JsonObject progress = Json.objectOf(row, "progress");
 		return new Tag(Json.intOf(row, "id", NONE), Json.stringOf(row, "label", ""),
 				Json.stringOf(row, "bracketOpen", "["), Json.stringOf(row, "bracketClose", "]"),
-				Json.boolOf(row, "gradient", false), colors(row), styles(row), Json.intOf(row, "price", NONE));
+				Json.boolOf(row, "gradient", false), colors(row), styles(row), Json.intOf(row, "price", NONE),
+				Json.intOf(row, "textColor", WHITE) & WHITE, Json.stringOf(row, "description", ""),
+				Json.stringOf(row, "key", ""), Json.stringOf(row, "kind", ""), Json.boolOf(row, "limited", false),
+				Json.longOf(row, "availableFrom", 0L), Json.longOf(row, "untilMs", 0L), Json.boolOf(row, "vaulted", false),
+				Json.doubleOf(row, "rarity", -1.0), Json.stringOf(row, "hint", ""), Json.intOf(progress, "have", 0),
+				Json.intOf(progress, "need", 0), Json.boolOf(row, "pendingUnlock", false),
+				Json.longOf(row, "unlocksAt", 0L), Json.listOf(row, "actions"));
 	}
 
-	// Minecraft's own formatting flags, authored per tag; anything unrecognised is not applied
+	// Minecraft's own formatting flags, authored per tag; the plate label is set in one face, so they ride
+	// along unread until a look that can honour them
 	private static Set<String> styles(JsonObject row)
 	{
 		if (!row.has("styles") || !row.get("styles").isJsonArray())
@@ -222,5 +265,18 @@ public final class CosmeticTags
 		}
 
 		return colors;
+	}
+
+	// A seasonal item whose window closed after the list was drawn is gone, not an error
+	private static void refuseSale(Backend.ApiResult result, String what)
+	{
+		if (!result.is("vaulted") && !result.is("no_tag") && !result.is("no_preset"))
+		{
+			Toasts.shopRefusal(result, what, Errors.SHARD_BUY);
+			return;
+		}
+
+		Toasts.push("No longer sold", "The window for " + what + " has closed.", new ItemStack(Items.AMETHYST_SHARD));
+		refresh();
 	}
 }

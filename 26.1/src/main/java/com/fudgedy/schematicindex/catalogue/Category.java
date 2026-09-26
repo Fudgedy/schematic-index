@@ -47,6 +47,34 @@ public enum Category
 		return tags;
 	}
 
+	public static String[] tagLabels()
+	{
+		Category[] tags = tags();
+		String[] labels = new String[tags.length];
+
+		for (int i = 0; i < tags.length; i++)
+		{
+			labels[i] = tags[i].label();
+		}
+
+		return labels;
+	}
+
+	public static int tagIndex(Category category)
+	{
+		Category[] tags = tags();
+
+		for (int i = 0; i < tags.length; i++)
+		{
+			if (tags[i] == category)
+			{
+				return i;
+			}
+		}
+
+		return -1;
+	}
+
 	// ALL is excluded, and an unknown current tag lands on the first one
 	public static Category next(String currentTag)
 	{

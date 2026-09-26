@@ -8,7 +8,9 @@ import com.google.gson.JsonObject;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 // Pulled from the server at runtime, so this content can change without a new release
@@ -38,16 +40,26 @@ public final class RemoteContent
 	{
 	}
 
+	public record Season(String id, String name, long endsAt, int accent)
+	{
+	}
+
 	private static volatile List<Credit> credits = List.of();
 	private static volatile @Nullable Announcement announcement;
 	private static volatile @Nullable Terms terms;
 	private static volatile List<Link> links = List.of();
 	private static volatile List<Partner> partners = List.of();
 	private static volatile String discord = "";
+	private static volatile Map<String, Boolean> features = Map.of();
+	private static volatile String latest = "";
+	private static volatile String minSupported = "";
+	private static volatile String rpcAppId = "";
+	private static volatile @Nullable Season season;
 	private static volatile boolean loaded;
 
 	// Offline and unloaded installs still get a working invite; the server value, when set, wins
 	private static final String DISCORD_FALLBACK = "https://discord.gg/schematicindex";
+	private static final String RPC_APP_FALLBACK = "1544291260418760734";
 
 	private static final AtomicBoolean POLLING = new AtomicBoolean();
 
@@ -84,6 +96,34 @@ public final class RemoteContent
 	{
 		String value = discord;
 		return value != null && !value.isBlank() ? value : DISCORD_FALLBACK;
+	}
+
+	// A switch the server has not sent reads as on, so an older server never hides a surface
+	public static boolean feature(String name)
+	{
+		Boolean value = features.get(name);
+		return value == null || value;
+	}
+
+	public static String latestVersion()
+	{
+		return latest;
+	}
+
+	public static String minSupportedVersion()
+	{
+		return minSupported;
+	}
+
+	public static String richPresenceAppId()
+	{
+		String value = rpcAppId;
+		return value.isBlank() ? RPC_APP_FALLBACK : value;
+	}
+
+	public static @Nullable Season season()
+	{
+		return season;
 	}
 
 	public static boolean loaded()
@@ -207,6 +247,34 @@ public final class RemoteContent
 				}
 
 				partners = partnerList;
+			}
+
+			Map<String, Boolean> switches = new HashMap<>();
+
+			if (body.has("features") && body.get("features").isJsonObject())
+			{
+				for (Map.Entry<String, JsonElement> entry : body.getAsJsonObject("features").entrySet())
+				{
+					if (entry.getValue().isJsonPrimitive() && entry.getValue().getAsJsonPrimitive().isBoolean())
+					{
+						switches.put(entry.getKey(), entry.getValue().getAsBoolean());
+					}
+				}
+			}
+
+			features = switches;
+			latest = s(body, "latest");
+			minSupported = s(body, "minSupported");
+			rpcAppId = s(body, "rpcAppId");
+
+			if (body.has("season") && body.get("season").isJsonObject())
+			{
+				JsonObject o = body.getAsJsonObject("season");
+				season = new Season(s(o, "id"), s(o, "name"), Json.longOf(o, "endsAt", 0L), Json.intOf(o, "accent", 0x2A7A5B));
+			}
+			else
+			{
+				season = null;
 			}
 
 			discord = s(body, "discord");

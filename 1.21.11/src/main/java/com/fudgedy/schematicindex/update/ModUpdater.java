@@ -24,7 +24,8 @@ public final class ModUpdater
 	private static final String LOADER = "fabric";
 	private static final String USER_AGENT = "fudgedy/schematicindex (update-check)";
 
-	public record Release(String version)
+	// id is the Modrinth version id, so the prompt can link straight to this game version's file
+	public record Release(String version, @Nullable String id)
 	{
 	}
 
@@ -103,7 +104,7 @@ public final class ModUpdater
 			}
 
 			String version = str(best, "version_number");
-			return version == null ? null : new Release(version);
+			return version == null ? null : new Release(version, str(best, "id"));
 		}
 		catch (Exception e)
 		{

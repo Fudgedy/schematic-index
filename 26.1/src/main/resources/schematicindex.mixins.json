@@ -6,6 +6,7 @@
   "mixins": [],
   "client": [
     "EntityRendererMixin",
+    "FontMixin",
     "OptionsMixin",
     "MainMixin",
     "MouseHandlerMixin",
@@ -15,7 +16,10 @@
     "ResourceOverrideMixin",
     "ToastManagerMixin",
     "OutputTargetMixin",
-    "TextDisplayMixin"
+    "TextDisplayMixin",
+    "ChatComponentMixin",
+    "PlayerTabOverlayMixin",
+    "TitleScreenMixin"
   ],
   "server": [],
   "injectors": {

@@ -77,8 +77,6 @@ import java.util.function.Consumer;
 // the GL device, so it is render-thread only and every resource below is reused across frames
 public final class GpuPreviewRenderer implements PreviewRenderer
 {
-	private static final int CLEAR_COLOR = 0xFF10151A;
-
 	private static final float Z_NEAR = 0.05F;
 
 	private static final int RENDER_WIDTH = 1920;
@@ -268,7 +266,9 @@ public final class GpuPreviewRenderer implements PreviewRenderer
 
 		try
 		{
+			long started = System.nanoTime();
 			draw(model, view, capture, null);
+			SchematicIndexMod.LOGGER.debug("Drew a {}x{} capture in {} ms", RENDER_WIDTH, RENDER_HEIGHT, elapsedMs(started));
 			device.createCommandEncoder().copyTextureToBuffer(capture.getColorTexture(), readback, 0L,
 					() -> sink.accept(readPixels(readback, capture)), 0);
 		}
@@ -327,7 +327,6 @@ public final class GpuPreviewRenderer implements PreviewRenderer
 			@Nullable Identifier id)
 	{
 		Minecraft client = Minecraft.getInstance();
-		PreviewLevel level = new PreviewLevel(model);
 
 		if (this.beLevelCache == null || this.beLevelModel != model)
 		{
@@ -341,10 +340,14 @@ public final class GpuPreviewRenderer implements PreviewRenderer
 		int layerCeiling = view.maxLayer() >= 1.0F
 				? model.sizeY()
 				: Math.max(1, Math.round(view.maxLayer() * model.sizeY()));
+		PreviewLevel level = new PreviewLevel(model, layerCeiling);
 
 		if (this.bakedModel != model || this.bakedLayerCeiling != layerCeiling)
 		{
+			String reason = this.bakedModel != model ? "model" : "layer cut";
+			long started = System.nanoTime();
 			bake(client, model, level, layerCeiling);
+			SchematicIndexMod.LOGGER.debug("Re-meshed the preview for a new {} in {} ms", reason, elapsedMs(started));
 		}
 
 		// Same basis IndexScreen.tickSpectator moves the free camera with, or WASD flies off-axis from the look
@@ -401,7 +404,7 @@ public final class GpuPreviewRenderer implements PreviewRenderer
 			GpuDevice device = RenderSystem.getDevice();
 			CommandEncoder encoder = device.createCommandEncoder();
 
-			encoder.clearColorAndDepthTextures(fbo.getColorTexture(), CLEAR_COLOR, fbo.getDepthTexture(), 1.0D);
+			encoder.clearColorAndDepthTextures(fbo.getColorTexture(), view.background(), fbo.getDepthTexture(), 1.0D);
 
 			RenderSystem.outputColorTextureOverride = fbo.getColorTextureView();
 			RenderSystem.outputDepthTextureOverride = fbo.getDepthTextureView();
@@ -668,6 +671,11 @@ public final class GpuPreviewRenderer implements PreviewRenderer
 
 		this.bakedModel = model;
 		this.bakedLayerCeiling = layerCeiling;
+	}
+
+	private static long elapsedMs(long startedNanos)
+	{
+		return (System.nanoTime() - startedNanos) / 1_000_000L;
 	}
 
 	private BufferBuilder builderFor(RenderType type,
@@ -984,7 +992,10 @@ public final class GpuPreviewRenderer implements PreviewRenderer
 	{
 		if (this.target == null)
 		{
+			long started = System.nanoTime();
 			this.target = new TextureTarget("schematicindex-preview", RENDER_WIDTH, RENDER_HEIGHT, true);
+			SchematicIndexMod.LOGGER.debug("Allocated the {}x{} preview target in {} ms", RENDER_WIDTH, RENDER_HEIGHT,
+					elapsedMs(started));
 		}
 
 		if (this.projectionBuffer == null)

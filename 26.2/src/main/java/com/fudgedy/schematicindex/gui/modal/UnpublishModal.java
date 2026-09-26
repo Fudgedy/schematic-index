@@ -133,7 +133,7 @@ public class UnpublishModal
 		String id = this.id;
 		this.open = false;
 
-		if (code == null || id == null)
+		if (!UploaderAccess.unlocked() || id == null)
 		{
 			return;
 		}
@@ -143,7 +143,7 @@ public class UnpublishModal
 			Minecraft.getInstance().execute(() -> {
 				if (result.ok())
 				{
-					this.screen.myStatsLoaded = false;
+					this.screen.dashboardPage.stats.loaded = false;
 					Catalogue.refresh();
 					Toasts.push("Post unpublished", "No one can view it any longer.", new ItemStack(Items.BARRIER));
 				}

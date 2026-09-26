@@ -1,0 +1,14 @@
+{
+  "engine": 1,
+  "effects": [
+    {"id": "shine", "label": "Shiny", "blurb": "Sweeping glint", "icon": "minecraft:nether_star", "layers": [{"kind": "shine"}]},
+    {"id": "flow", "label": "Colour Flow", "blurb": "Gliding colours", "icon": "minecraft:prismarine_crystals", "layers": [{"kind": "flow"}]},
+    {"id": "wave", "label": "Rainbow Wave", "blurb": "Rolling rainbow", "icon": "minecraft:spectral_arrow", "layers": [{"kind": "wave"}]},
+    {"id": "pulse", "label": "Pulse", "blurb": "Dims and swells", "icon": "minecraft:redstone", "layers": [{"kind": "pulse"}]},
+    {"id": "neon", "label": "Neon", "blurb": "Buzzing sign glow", "icon": "minecraft:glowstone_dust", "layers": [{"kind": "neon"}]},
+    {"id": "glitch", "label": "Glitch", "blurb": "Tears and jitters", "icon": "minecraft:echo_shard", "layers": [{"kind": "glitch"}]},
+    {"id": "frozen", "label": "Frozen", "blurb": "Hanging icicles", "icon": "minecraft:packed_ice", "layers": [{"kind": "frozen"}]},
+    {"id": "molten", "label": "Molten", "blurb": "Embers and lava", "icon": "minecraft:magma_cream", "tint": "name", "layers": [{"kind": "molten"}]},
+    {"id": "toxic", "label": "Toxic", "blurb": "Rising bubbles", "icon": "minecraft:slime_ball", "tint": "name", "layers": [{"kind": "toxic"}]}
+  ]
+}

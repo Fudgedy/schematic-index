@@ -3,6 +3,7 @@ package com.fudgedy.schematicindex.catalogue;
 import com.fudgedy.schematicindex.Cosmetics;
 import com.fudgedy.schematicindex.Errors;
 import com.fudgedy.schematicindex.SchematicIndexMod;
+import com.fudgedy.schematicindex.fx.Effects;
 import com.fudgedy.schematicindex.gui.Theme;
 import com.fudgedy.schematicindex.gui.Toasts;
 import com.google.gson.JsonElement;
@@ -10,10 +11,12 @@ import com.google.gson.JsonObject;
 import net.minecraft.client.Minecraft;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
+import org.jetbrains.annotations.Nullable;
 
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -27,8 +30,12 @@ public final class CosmeticColors
 
 	private static volatile List<Owned> colors = List.of();
 	private static volatile Set<String> ownedPresets = Set.of();
+	private static volatile List<Cosmetics.Preset> presets = List.of();
+	private static volatile RemoteContent.@Nullable Season season;
 	private static volatile Set<String> ownedEffects = Set.of();
-	private static volatile Map<String, Integer> effectPrices = Map.of(Cosmetics.SHINE, 350, Cosmetics.FLOW, 400);
+	private static volatile Map<String, Integer> effectPrices = Map.of(Cosmetics.SHINE, 350, Cosmetics.FLOW, 400,
+			Cosmetics.WAVE, 500, Cosmetics.PULSE, 300, Cosmetics.NEON, 450, Cosmetics.FROZEN, 400,
+			Cosmetics.MOLTEN, 400, Cosmetics.TOXIC, 400);
 	private static volatile int balance;
 	private static volatile int price = 175;
 	private static volatile int refundValue = 75;
@@ -69,6 +76,22 @@ public final class CosmeticColors
 	public static int presetPrice()
 	{
 		return presetPrice;
+	}
+
+	// Live presets in server order, then owned ones whose window closed, which stay wearable; empty until loaded
+	public static List<Cosmetics.Preset> presets()
+	{
+		return presets;
+	}
+
+	public static RemoteContent.@Nullable Season season()
+	{
+		return season;
+	}
+
+	public static int priceOf(Cosmetics.Preset preset)
+	{
+		return preset.price() >= 0 ? preset.price() : presetPrice;
 	}
 
 	public static int effectPrice(String id)
@@ -178,6 +201,8 @@ public final class CosmeticColors
 
 	public static void refresh()
 	{
+		Effects.refresh();
+
 		if (loading)
 		{
 			return;
@@ -202,6 +227,8 @@ public final class CosmeticColors
 	{
 		colors = List.of();
 		ownedPresets = Set.of();
+		presets = List.of();
+		season = null;
 		ownedEffects = Set.of();
 		balance = 0;
 		publishedLoadout = "";
@@ -263,7 +290,7 @@ public final class CosmeticColors
 	}
 
 	// Buys a named preset; the server owns the colour list, so the mod only sends which one
-	public static void buyPreset(String name, Runnable onBought)
+	public static void buyPreset(String name, int price, Runnable onBought)
 	{
 		Net.submit(() ->
 		{
@@ -275,14 +302,14 @@ public final class CosmeticColors
 				Minecraft.getInstance().execute(() ->
 				{
 					Theme.beaconActivate();
-					Toasts.push("Redeemed " + presetPrice + " Shards", "The " + name + " palette is yours.",
-							new ItemStack(Items.AMETHYST_SHARD));
+					String title = price > 0 ? "Redeemed " + price + " Shards" : "Claimed";
+					Toasts.push(title, "The " + name + " palette is yours.", new ItemStack(Items.AMETHYST_SHARD));
 					onBought.run();
 				});
 			}
 			else
 			{
-				Minecraft.getInstance().execute(() -> Toasts.shopRefusal(result, "this preset", Errors.SHARD_BUY));
+				Minecraft.getInstance().execute(() -> refuseSale(result, "this preset"));
 			}
 		});
 	}
@@ -316,6 +343,19 @@ public final class CosmeticColors
 		if (o == null)
 		{
 			return;
+		}
+
+		// Read before the palette, whose restore looks a worn preset up in this list
+		if (o.has("presets") && o.get("presets").isJsonArray())
+		{
+			presets = readPresets(o);
+		}
+
+		if (o.has("season"))
+		{
+			JsonObject row = Json.objectOf(o, "season");
+			season = row == null ? null : new RemoteContent.Season(Json.stringOf(row, "id", ""),
+					Json.stringOf(row, "name", ""), Json.longOf(row, "endsAt", 0L), Json.intOf(row, "accent", 0x2A7A5B));
 		}
 
 		// Read before the palette, since restoring the loadout prunes effects against what is owned
@@ -363,6 +403,50 @@ public final class CosmeticColors
 		max = Json.intOf(o, "max", max);
 	}
 
+	private static List<Cosmetics.Preset> readPresets(JsonObject o)
+	{
+		List<Cosmetics.Preset> out = new ArrayList<>();
+		Set<String> live = new HashSet<>();
+
+		for (JsonElement element : o.getAsJsonArray("presets"))
+		{
+			if (!element.isJsonObject())
+			{
+				continue;
+			}
+
+			JsonObject row = element.getAsJsonObject();
+			String name = Json.stringOf(row, "name", "");
+			int[] stops = Backend.parseStops(row, "stops");
+
+			if (name.isBlank() || stops.length == 0)
+			{
+				continue;
+			}
+
+			live.add(name);
+			out.add(new Cosmetics.Preset(name, stops, Json.intOf(row, "price", Cosmetics.Preset.UNPRICED),
+					Json.boolOf(row, "limited", false), Json.longOf(row, "untilMs", 0L), false));
+		}
+
+		JsonObject owned = Json.objectOf(o, "ownedPresetStops");
+
+		if (owned != null)
+		{
+			for (Map.Entry<String, JsonElement> entry : owned.entrySet())
+			{
+				int[] stops = Backend.parseStops(owned, entry.getKey());
+
+				if (!live.contains(entry.getKey()) && stops.length > 0)
+				{
+					out.add(new Cosmetics.Preset(entry.getKey(), stops, Cosmetics.Preset.UNPRICED, false, 0L, true));
+				}
+			}
+		}
+
+		return List.copyOf(out);
+	}
+
 	private static void applyEffects(JsonObject o)
 	{
 		if (o.has("owned") && o.get("owned").isJsonArray())
@@ -391,5 +475,18 @@ public final class CosmeticColors
 		}
 
 		return Map.copyOf(prices);
+	}
+
+	// A seasonal item whose window closed after the list was drawn is gone, not an error
+	private static void refuseSale(Backend.ApiResult result, String what)
+	{
+		if (!result.is("vaulted") && !result.is("no_tag") && !result.is("no_preset"))
+		{
+			Toasts.shopRefusal(result, what, Errors.SHARD_BUY);
+			return;
+		}
+
+		Toasts.push("No longer sold", "The window for " + what + " has closed.", new ItemStack(Items.AMETHYST_SHARD));
+		refresh();
 	}
 }

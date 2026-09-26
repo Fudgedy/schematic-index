@@ -16,6 +16,7 @@ import org.jetbrains.annotations.Nullable;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.function.BooleanSupplier;
 
 public final class Toasts
 {
@@ -27,12 +28,17 @@ public final class Toasts
 	private static final int ACTION_HEIGHT = 14;
 	private static final long LIFETIME = 5200L;
 	private static final long SLIDE = 260L;
+	private static final String STORE_PATH = "/#store";
 	private static final int MAX_VISIBLE = 4;
 	private static final int MAX_QUEUE = 16;
 	// Each wrapped line past the first lengthens the lifetime, so a longer toast stays readable
 	private static final long LINE_LIFETIME_BONUS = 700L;
 
 	private static final List<Toast> ACTIVE = new CopyOnWriteArrayList<>();
+	// Guards merging against the render thread's expiry sweep, since pushes arrive from network threads
+	private static final Object LOCK = new Object();
+	// Set while a server notice pushes its toast, whose inbox row already exists server side
+	private static final ThreadLocal<Boolean> FROM_NOTICE = new ThreadLocal<>();
 
 	// Measured on the first render, where the Font is available: a toast can be pushed from a
 	// background callback, so the measuring cannot happen at push time
@@ -41,22 +47,35 @@ public final class Toasts
 		final String title;
 		final String message;
 		// Zero until the first draw: a toast pushed during loading must not be spent before a screen shows it
-		long shownAt;
+		volatile long shownAt;
 		final @Nullable ItemStack icon;
 		final @Nullable String avatarUrl;
+		final boolean crown;
+		final String iconKey;
 		final int textLeft;
-		final @Nullable String actionLabel;
-		final @Nullable Runnable action;
+		@Nullable String actionLabel;
+		@Nullable Runnable action;
+		volatile int count = 1;
 		// Screen rect of the action pill from the last draw, so a click on the mod screen can find it
 		final Rect actionRect = new Rect();
+		@Nullable String secondLabel;
+		@Nullable Runnable secondAction;
+		final Rect secondRect = new Rect();
 
 		@Nullable List<String> lines;
 		int cardHeight;
 		final long baseLifetime;
-		long lifetime;
+		volatile long lifetime;
+		long span;
 
 		Toast(String title, String message, long baseLifetime, @Nullable ItemStack icon, @Nullable String avatarUrl,
 				@Nullable String actionLabel, @Nullable Runnable action)
+		{
+			this(title, message, baseLifetime, icon, avatarUrl, false, actionLabel, action);
+		}
+
+		Toast(String title, String message, long baseLifetime, @Nullable ItemStack icon, @Nullable String avatarUrl,
+				boolean crown, @Nullable String actionLabel, @Nullable Runnable action)
 		{
 			this.title = title;
 			this.message = message;
@@ -64,7 +83,10 @@ public final class Toasts
 			this.lifetime = baseLifetime;
 			this.icon = icon;
 			this.avatarUrl = avatarUrl;
-			this.textLeft = icon != null || avatarUrl != null ? 30 : 14;
+			this.crown = crown;
+			this.iconKey = crown ? ToastHistory.CROWN
+					: avatarUrl != null ? ToastHistory.AVATAR_PREFIX + avatarUrl : ToastHistory.iconKey(icon);
+			this.textLeft = icon != null || avatarUrl != null || crown ? 30 : 14;
 			this.actionLabel = actionLabel;
 			this.action = action;
 		}
@@ -79,9 +101,34 @@ public final class Toasts
 			List<String> wrapped = wrap(font, this.message, WIDTH - this.textLeft - 10, 4);
 			this.cardHeight = 11 + font.lineHeight + 4 + Math.max(1, wrapped.size()) * (font.lineHeight + 1) + 9
 					+ (this.action != null ? ACTION_HEIGHT + 4 : 0);
-			this.lifetime = this.baseLifetime + Math.max(0, wrapped.size() - 1) * LINE_LIFETIME_BONUS;
+			this.span = this.baseLifetime + Math.max(0, wrapped.size() - 1) * LINE_LIFETIME_BONUS;
+			this.lifetime = this.span;
 			this.lines = wrapped;
 			this.shownAt = now;
+		}
+
+		boolean sameAs(Toast other)
+		{
+			return this.title.equals(other.title) && this.message.equals(other.message) && this.iconKey.equals(other.iconKey);
+		}
+
+		void absorb(Toast newer, long now)
+		{
+			this.count++;
+
+			// The card height was measured with or without a pill, so only a like-for-like action is swapped in
+			if (this.lines == null || (this.action == null) == (newer.action == null))
+			{
+				this.actionLabel = newer.actionLabel;
+				this.action = newer.action;
+				this.secondLabel = newer.secondLabel;
+				this.secondAction = newer.secondAction;
+			}
+
+			if (this.shownAt > 0L)
+			{
+				this.lifetime = now - this.shownAt + this.span;
+			}
 		}
 	}
 
@@ -104,6 +151,21 @@ public final class Toasts
 			long lifetime)
 	{
 		add(new Toast(title, message, lifetime, icon, null, actionLabel, action));
+	}
+
+	public static void pushCrown(String title, String message, @Nullable String actionLabel, @Nullable Runnable action)
+	{
+		add(new Toast(title, message, LIFETIME, null, null, true, action == null ? null : actionLabel, action));
+	}
+
+	// Two pills side by side, the first drawn as the primary one
+	public static void pushActions(String title, String message, @Nullable ItemStack icon, String actionLabel, Runnable action,
+			String secondLabel, Runnable secondAction)
+	{
+		Toast toast = new Toast(title, message, LIFETIME, icon, null, actionLabel, action);
+		toast.secondLabel = secondLabel;
+		toast.secondAction = secondAction;
+		add(toast);
 	}
 
 	public static long defaultLifetime()
@@ -129,6 +191,17 @@ public final class Toasts
 		Errors.report(code);
 	}
 
+	// Every shortfall offers the store, the same page as the Shard menu's Buy button
+	public static void notEnoughShards(String message)
+	{
+		pushAction("Not Enough Shards", message, new ItemStack(Items.AMETHYST_SHARD), "Buy shards", Toasts::openStore);
+	}
+
+	public static void openStore()
+	{
+		IndexScreen.openExternal(Backend.siteBase() + STORE_PATH);
+	}
+
 	// "Not Enough Shards" is only ever the 402 answer; what names the item, such as "this colour"
 	public static void shopRefusal(Backend.ApiResult result, String what, String code)
 	{
@@ -136,7 +209,7 @@ public final class Toasts
 
 		if (result.status() == 402 || result.is("insufficient"))
 		{
-			push("Not Enough Shards", "You don't have enough shards for " + what + ".", shard);
+			notEnoughShards("You don't have enough shards for " + what + ".");
 		}
 		else if (result.is("already_owned") || result.is("owned"))
 		{
@@ -152,17 +225,29 @@ public final class Toasts
 		}
 	}
 
+	// Runs a server notice's toast push without a local inbox row, since the notice already has one
+	public static boolean fromNotice(BooleanSupplier push)
+	{
+		FROM_NOTICE.set(Boolean.TRUE);
+		boolean pushed = push.getAsBoolean();
+		FROM_NOTICE.remove();
+		return pushed;
+	}
+
 	public static boolean mouseClicked(double mouseX, double mouseY)
 	{
 		for (Toast toast : ACTIVE)
 		{
-			if (toast.action == null || !toast.actionRect.contains(mouseX, mouseY))
+			Runnable action = toast.action != null && toast.actionRect.contains(mouseX, mouseY) ? toast.action
+					: (toast.secondAction != null && toast.secondRect.contains(mouseX, mouseY) ? toast.secondAction : null);
+
+			if (action == null)
 			{
 				continue;
 			}
 
 			Theme.click();
-			toast.action.run();
+			action.run();
 			ACTIVE.remove(toast);
 			return true;
 		}
@@ -172,18 +257,35 @@ public final class Toasts
 
 	private static void add(Toast toast)
 	{
+		if (FROM_NOTICE.get() == null)
+		{
+			ToastHistory.record(toast.title, toast.message, toast.iconKey, toast.actionLabel, toast.action);
+		}
+
 		if (!Settings.toasts())
 		{
 			return;
 		}
 
-		ACTIVE.add(toast);
-
-		// render() shows the first MAX_VISIBLE, so the dropped one is the oldest past that window rather than index 0
-		if (ACTIVE.size() > MAX_QUEUE)
+		synchronized (LOCK)
 		{
-			int drop = Math.min(MAX_VISIBLE, ACTIVE.size() - 1);
-			ACTIVE.remove(drop);
+			for (Toast active : ACTIVE)
+			{
+				if (active.sameAs(toast))
+				{
+					active.absorb(toast, System.currentTimeMillis());
+					return;
+				}
+			}
+
+			ACTIVE.add(toast);
+
+			// render() shows the first MAX_VISIBLE, so the dropped one is the oldest past that window rather than index 0
+			if (ACTIVE.size() > MAX_QUEUE)
+			{
+				int drop = Math.min(MAX_VISIBLE, ACTIVE.size() - 1);
+				ACTIVE.remove(drop);
+			}
 		}
 	}
 
@@ -207,7 +309,10 @@ public final class Toasts
 		}
 
 		long now = System.currentTimeMillis();
-		ACTIVE.removeIf(toast -> toast.shownAt > 0L && now - toast.shownAt >= toast.lifetime);
+		synchronized (LOCK)
+		{
+			ACTIVE.removeIf(toast -> toast.shownAt > 0L && now - toast.shownAt >= toast.lifetime);
+		}
 
 		Font font = client.font;
 		int baseY = client.getWindow().getGuiScaledHeight() - MARGIN;
@@ -253,13 +358,18 @@ public final class Toasts
 				Theme.roundedRect(ctx, ax, ay, size, size, 4, Theme.SURFACE_ELEVATED);
 			}
 		}
+		else if (toast.crown)
+		{
+			Crown.draw(ctx, x + BAR + 8, y + (height - Crown.HEIGHT) / 2);
+		}
 		else if (toast.icon != null)
 		{
 			ctx.item(toast.icon, x + BAR + 6, y + (height - 16) / 2);
 		}
 
 		int tx = x + toast.textLeft;
-		Theme.text(ctx, font, Theme.bold(Theme.clipBold(font, toast.title, WIDTH - toast.textLeft - 8)),
+		String title = toast.count > 1 ? toast.title + " (" + toast.count + ")" : toast.title;
+		Theme.text(ctx, font, Theme.bold(Theme.clipBold(font, title, WIDTH - toast.textLeft - 8)),
 				tx, y + 8, Theme.TEXT);
 
 		int ly = y + 8 + font.lineHeight + 3;
@@ -278,6 +388,13 @@ public final class Toasts
 			int pillWidth = font.width(Theme.bold(toast.actionLabel)) + 12;
 			toast.actionRect.set(x + WIDTH - 6 - pillWidth, y + height - 5 - ACTION_HEIGHT, pillWidth, ACTION_HEIGHT);
 			Buttons.pill(ctx, font, toast.actionRect, toast.actionLabel, -1, -1, true);
+
+			if (toast.secondAction != null && toast.secondLabel != null)
+			{
+				int secondWidth = font.width(Theme.bold(toast.secondLabel)) + 12;
+				toast.secondRect.set(toast.actionRect.x - 4 - secondWidth, toast.actionRect.y, secondWidth, ACTION_HEIGHT);
+				Buttons.pill(ctx, font, toast.secondRect, toast.secondLabel, -1, -1, false);
+			}
 		}
 
 		float remaining = Math.max(0.0F, 1.0F - age / (float) toast.lifetime);

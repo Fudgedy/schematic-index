@@ -5,6 +5,7 @@ import com.fudgedy.schematicindex.gui.mapart.MapartMaterialsPanel;
 import com.fudgedy.schematicindex.gui.mapart.MapartSession;
 import com.fudgedy.schematicindex.gui.mapart.MapartSettingsPanel;
 import com.fudgedy.schematicindex.gui.mapart.MapartUi;
+import com.fudgedy.schematicindex.gui.modal.CoachMark;
 import com.fudgedy.schematicindex.gui.widget.Buttons;
 import com.fudgedy.schematicindex.gui.widget.Controls;
 import com.fudgedy.schematicindex.gui.widget.Dropdown;
@@ -68,6 +69,7 @@ public class MapartTab
 
 	public void render(GuiGraphics ctx, int mouseX, int mouseY)
 	{
+		CoachMark.maybe(this.screen, CoachMark.Kind.MAPART);
 		this.font = this.screen.font();
 		MapartSession.uploadPending();
 

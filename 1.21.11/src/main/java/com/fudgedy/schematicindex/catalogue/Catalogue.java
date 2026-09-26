@@ -143,6 +143,13 @@ public final class Catalogue
 		refresh(false);
 	}
 
+	// Refetches without the loading state, so a grid already showing a local change never drops to a skeleton
+	public static void revalidate()
+	{
+		lastRefresh = 0L;
+		refresh(true);
+	}
+
 	private static void refresh(boolean soft)
 	{
 		if (!Backend.configured())
@@ -319,6 +326,54 @@ public final class Catalogue
 			if (postId.equals(entry.id()))
 			{
 				replace(entry.withLikes(likes, liked));
+				return;
+			}
+		}
+	}
+
+	// A post the server just took down leaves the grid now rather than on the next refetch
+	public static synchronized void drop(String postId)
+	{
+		synchronized (DETAILS_BY_ID)
+		{
+			DETAILS_BY_ID.remove(postId);
+		}
+
+		List<SchematicEntry> current = posts;
+		List<SchematicEntry> next = new ArrayList<>(current.size());
+
+		for (SchematicEntry entry : current)
+		{
+			if (!postId.equals(entry.id()))
+			{
+				next.add(entry);
+			}
+		}
+
+		if (next.size() != current.size())
+		{
+			setPosts(next);
+		}
+	}
+
+	public static synchronized void applyEdit(String postId, String title, String thumbnailName, String designer,
+			String description, Category category)
+	{
+		SchematicEntry held = detailsOf(postId);
+
+		if (held != null)
+		{
+			synchronized (DETAILS_BY_ID)
+			{
+				DETAILS_BY_ID.put(postId, held.withText(title, thumbnailName, designer, description, category));
+			}
+		}
+
+		for (SchematicEntry entry : posts)
+		{
+			if (postId.equals(entry.id()))
+			{
+				replace(entry.withText(title, thumbnailName, designer, description, category));
 				return;
 			}
 		}

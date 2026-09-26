@@ -145,17 +145,17 @@ public class DeleteCollectionModal
 		{
 			CollectionStore.delete(this.name);
 
-			if (this.name.equals(this.screen.activeCollection))
+			if (this.name.equals(this.screen.browsePage.activeCollection))
 			{
-				this.screen.activeCollection = null;
+				this.screen.browsePage.activeCollection = null;
 			}
 		}
 
 		this.open = false;
 		this.name = null;
-		this.screen.layoutChips();
+		this.screen.browsePage.layoutChips();
 		this.screen.gridTop = IndexScreen.TOP_BAR_HEIGHT + this.screen.chipRowHeight;
-		this.screen.refilter();
+		this.screen.browsePage.refilter();
 	}
 
 	private void cancel()

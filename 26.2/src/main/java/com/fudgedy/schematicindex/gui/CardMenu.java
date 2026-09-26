@@ -4,6 +4,7 @@ import com.fudgedy.schematicindex.catalogue.CollectionStore;
 import com.fudgedy.schematicindex.catalogue.SchematicEntry;
 import com.fudgedy.schematicindex.catalogue.Usage;
 import com.fudgedy.schematicindex.gui.widget.Rect;
+import com.fudgedy.schematicindex.staff.StaffScreen;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.input.KeyEvent;
@@ -36,6 +37,7 @@ public class CardMenu
 	private final Rect download = new Rect();
 	private final Rect creator = new Rect();
 	private final Rect newCollection = new Rect();
+	private final Rect staffActions = new Rect();
 	private final List<Rect> collectionRects = new ArrayList<>();
 	// The sub-list scrolls inside this band once the collections outgrow the window
 	private final Rect listBand = new Rect();
@@ -84,7 +86,8 @@ public class CardMenu
 
 		Font font = this.screen.font();
 		List<String> names = this.collectionsOpen ? CollectionStore.names() : List.of();
-		int fixedRows = PAD * 2 + ROW * 4;
+		StaffScreen staff = this.staff();
+		int fixedRows = PAD * 2 + ROW * (staff == null ? 4 : 5);
 		int listHeight = this.collectionsOpen ? (names.size() + 1) * ROW : 0;
 		int listView = Math.max(0, Math.min(listHeight, this.screen.height - 8 - fixedRows));
 		this.listMaxScroll = Math.max(0, listHeight - listView);
@@ -158,7 +161,15 @@ public class CardMenu
 
 		String downloadLabel = this.screen.isDownloaded(entry) ? "Download again" : "Download";
 		rowY = this.row(ctx, font, this.download, x, rowY, downloadLabel, mouseX, mouseY);
-		this.row(ctx, font, this.creator, x, rowY, "Open creator", mouseX, mouseY);
+		rowY = this.row(ctx, font, this.creator, x, rowY, "Open creator", mouseX, mouseY);
+
+		if (staff == null)
+		{
+			this.staffActions.set(0, 0, 0, 0);
+			return;
+		}
+
+		this.row(ctx, font, this.staffActions, x, rowY, staff.postMenuLabel(), mouseX, mouseY);
 	}
 
 	public boolean mouseClicked(double mouseX, double mouseY)
@@ -212,7 +223,13 @@ public class CardMenu
 		{
 			this.close();
 			Theme.click(1.0F);
-			this.screen.openProfile(entry.poster());
+			this.screen.browsePage.profile.open(entry.poster());
+		}
+		else if (this.staffActions.contains(mouseX, mouseY) && this.staff() != null)
+		{
+			this.close();
+			Theme.click(1.0F);
+			this.staff().openPostMenu(entry);
 		}
 		else
 		{
@@ -259,6 +276,13 @@ public class CardMenu
 		}
 	}
 
+	// Null unless this is the staff jar and the verified account is staff
+	private @Nullable StaffScreen staff()
+	{
+		StaffScreen staff = this.screen.staff;
+		return staff != null && staff.available() ? staff : null;
+	}
+
 	private int row(GuiGraphicsExtractor ctx, Font font, Rect rect, int x, int y, String label, int mouseX, int mouseY)
 	{
 		rect.set(x + PAD, y, WIDTH - PAD * 2, ROW);
@@ -296,7 +320,7 @@ public class CardMenu
 
 			if (this.screen.page == IndexScreen.Page.SAVED)
 			{
-				this.screen.refilter();
+				this.screen.browsePage.refilter();
 			}
 
 			return true;

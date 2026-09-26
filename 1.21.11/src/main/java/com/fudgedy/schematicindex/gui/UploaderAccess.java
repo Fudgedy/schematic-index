@@ -2,6 +2,7 @@ package com.fudgedy.schematicindex.gui;
 
 import com.fudgedy.schematicindex.catalogue.Backend;
 import com.fudgedy.schematicindex.catalogue.Json;
+import com.fudgedy.schematicindex.catalogue.McAuth;
 import com.google.gson.JsonObject;
 import org.jetbrains.annotations.Nullable;
 
@@ -15,14 +16,20 @@ public final class UploaderAccess
 	{
 	}
 
+	// A verified session is enough to post; a legacy code still unlocks the form for an unverified player
 	public static boolean unlocked()
+	{
+		return profile != null || McAuth.verified();
+	}
+
+	public static boolean hasCode()
 	{
 		return profile != null;
 	}
 
 	public static @Nullable String profile()
 	{
-		return profile;
+		return profile != null ? profile : McAuth.verifiedName();
 	}
 
 	public static @Nullable String code()
@@ -32,6 +39,11 @@ public final class UploaderAccess
 
 	public static @Nullable String ign()
 	{
+		if (profile == null)
+		{
+			return McAuth.verifiedName();
+		}
+
 		return ign != null && !ign.isBlank() ? ign : profile;
 	}
 
@@ -58,10 +70,5 @@ public final class UploaderAccess
 		profile = null;
 		code = null;
 		ign = null;
-	}
-
-	public static String betaHint()
-	{
-		return "Ask an existing uploader for an access code.";
 	}
 }

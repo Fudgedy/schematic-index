@@ -1,5 +1,9 @@
 package com.fudgedy.schematicindex.mapart;
 
+import com.fudgedy.schematicindex.export.Watermark;
+
+import javax.imageio.ImageIO;
+import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -12,6 +16,9 @@ import java.util.Map;
 public final class MapartExports
 {
 	public static final String MATERIALS_SUFFIX = "_materials.txt";
+	public static final String PREVIEW_SUFFIX = "_preview.png";
+	private static final int PREVIEW_SCALE = 4;
+	private static final String PREVIEW_FOOTER = "Made with The Schematic Index · schematicindex.com";
 
 	private MapartExports()
 	{
@@ -36,5 +43,32 @@ public final class MapartExports
 		lines.add(String.format(Locale.ROOT, "%,d blocks total", total));
 		Files.createDirectories(target.toAbsolutePath().getParent());
 		Files.write(target, lines, StandardCharsets.UTF_8);
+	}
+
+	// Nearest-neighbour, so every map pixel stays a crisp block of colour instead of a blur
+	public static BufferedImage writePreview(MapartResult result, Path target) throws IOException
+	{
+		int width = result.width();
+		int height = result.height();
+		int[] pixels = result.preview();
+		BufferedImage scaled = new BufferedImage(width * PREVIEW_SCALE, height * PREVIEW_SCALE, BufferedImage.TYPE_INT_ARGB);
+
+		for (int y = 0; y < scaled.getHeight(); y++)
+		{
+			for (int x = 0; x < scaled.getWidth(); x++)
+			{
+				scaled.setRGB(x, y, pixels[(y / PREVIEW_SCALE) * width + x / PREVIEW_SCALE]);
+			}
+		}
+
+		BufferedImage image = Watermark.footer(scaled, PREVIEW_FOOTER);
+		Files.createDirectories(target.toAbsolutePath().getParent());
+
+		if (!ImageIO.write(image, "png", target.toFile()))
+		{
+			throw new IOException("No PNG writer");
+		}
+
+		return image;
 	}
 }

@@ -178,14 +178,14 @@ public class RenameCollectionModal
 
 		if (!cleaned.isEmpty() && CollectionStore.rename(this.from, cleaned))
 		{
-			if (this.from.equals(this.screen.activeCollection))
+			if (this.from.equals(this.screen.browsePage.activeCollection))
 			{
-				this.screen.activeCollection = cleaned;
+				this.screen.browsePage.activeCollection = cleaned;
 			}
 
-			this.screen.layoutChips();
+			this.screen.browsePage.layoutChips();
 			this.screen.gridTop = IndexScreen.TOP_BAR_HEIGHT + this.screen.chipRowHeight;
-			this.screen.refilter();
+			this.screen.browsePage.refilter();
 		}
 
 		this.open = false;

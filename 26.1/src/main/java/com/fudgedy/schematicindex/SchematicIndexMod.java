@@ -1,7 +1,9 @@
 package com.fudgedy.schematicindex;
 
 import com.fudgedy.schematicindex.mapart.MapCorners;
+import com.fudgedy.schematicindex.rpc.RichPresence;
 import com.fudgedy.schematicindex.update.UpdateNotice;
+import com.fudgedy.schematicindex.web.LocalBridge;
 import fi.dy.masa.malilib.event.RenderEventHandler;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.loader.api.FabricLoader;
@@ -20,9 +22,11 @@ public class SchematicIndexMod implements ClientModInitializer
 		Keybinds.register();
 		RenderEventHandler.getInstance().registerWorldLastRenderer(MapCorners.getInstance());
 		Presence.start();
+		LocalBridge.start();
 		UpdateNotice.start();
 		ModTags.start();
 		ModIcon.start();
+		RichPresence.start();
 		LOGGER.info("The Schematic Index loaded (catalogue: {})",
 				Settings.hasApiBaseUrl() ? Settings.apiBaseUrl() : "not configured");
 	}

@@ -2,6 +2,7 @@ package com.fudgedy.schematicindex;
 
 import com.fudgedy.schematicindex.gui.IndexScreen;
 import com.fudgedy.schematicindex.gui.Toasts;
+import com.fudgedy.schematicindex.gui.detail.RatingNudge;
 import com.fudgedy.schematicindex.mapart.MapCorners;
 import com.fudgedy.schematicindex.mixin.KeyMappingCategoryAccessor;
 import com.mojang.blaze3d.platform.InputConstants;
@@ -9,9 +10,11 @@ import fi.dy.masa.malilib.event.TickHandler;
 import fi.dy.masa.malilib.interfaces.IClientTickHandler;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.resources.Identifier;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
+import org.jetbrains.annotations.Nullable;
 
 import java.util.List;
 
@@ -59,9 +62,22 @@ public final class Keybinds implements IClientTickHandler
 		return new KeyMapping[]{OPEN, TOGGLE_CORNERS};
 	}
 
+	public static String openKeyName()
+	{
+		return OPEN.getTranslatedKeyMessage().getString();
+	}
+
+	// Where the screen lives differs between game versions, and shared code must not care
+	public static @Nullable Screen currentScreen()
+	{
+		return Minecraft.getInstance().gui.screen();
+	}
+
 	@Override
 	public void onClientTick(Minecraft mc)
 	{
+		RatingNudge.tick();
+
 		while (OPEN.consumeClick())
 		{
 			if (mc.gui.screen() == null)

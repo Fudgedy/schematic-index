@@ -87,6 +87,19 @@ public final class Stars
 		}
 	}
 
+	// Five full stars in one colour over the same cells draw() uses, for highlights laid over a row
+	public static void tint(GuiGraphicsExtractor ctx, Font font, int x, int y, float scale, int color)
+	{
+		int cell = cellWidth(font, scale);
+		int glyphW = Math.round(font.width(FULL) * scale);
+		int glyphH = Math.round(font.lineHeight * scale) + 2;
+
+		for (int i = 0; i < 5; i++)
+		{
+			paint(ctx, x + i * cell + glyphW / 2.0F, y + glyphH / 2.0F, glyphH / 2.0F - 1.0F, color);
+		}
+	}
+
 	// Each GUI pixel is supersampled 3x3 so the edges read smooth rather than jagged
 	private static void paint(GuiGraphicsExtractor ctx, float cx, float cy, float outerR, int color)
 	{

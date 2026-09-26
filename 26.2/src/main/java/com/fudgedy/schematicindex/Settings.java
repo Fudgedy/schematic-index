@@ -15,6 +15,8 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Properties;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 
@@ -29,6 +31,8 @@ public final class Settings
 	private static final String KEY_SOUNDS = "sound_effects";
 	private static final String KEY_MOD_TAGS = "mod_tags";
 	private static final String KEY_OWN_NAMETAG = "own_nametag";
+	private static final String KEY_CHAT_NAMES = "chat_names";
+	private static final String KEY_TAB_NAMES = "tab_names";
 	private static final String KEY_MAP_CORNERS = "map_corners";
 	private static final String KEY_CORNER_HEIGHT = "corner_height";
 	private static final String KEY_MAPART_PRESETS = "mapart_presets";
@@ -53,12 +57,22 @@ public final class Settings
 	private static final String KEY_COSMETIC_LOADOUT = "cosmetic_loadout";
 	private static final String KEY_USAGE_DATA = "usage_data";
 	private static final String KEY_DEBUG_UPDATE_TOAST = "debug_update_toast";
+	// Keys this class reads itself; every other key in the file is a keyed extra owned by a feature class
+	private static final Set<String> OWN_KEYS = Set.of(KEY_CONFIG_VERSION, KEY_SOUNDS, KEY_MOD_TAGS, KEY_OWN_NAMETAG,
+			KEY_CHAT_NAMES, KEY_TAB_NAMES, KEY_MAP_CORNERS, KEY_CORNER_HEIGHT, KEY_MAPART_PRESETS, KEY_UI_VOLUME,
+			KEY_PREVIEW_FOV, KEY_CONFIRM_OVERWRITE, KEY_DOWNLOAD_DIR, KEY_GRID_DENSITY, KEY_TUTORIAL_SEEN,
+			KEY_SHARD_WELCOME_SEEN, KEY_TOASTS, KEY_NOTIFICATIONS, KEY_CREATOR_ALERTS, KEY_NOTIFICATIONS_SEEN,
+			KEY_LAST_VISIT, KEY_SESSION_TOKEN, KEY_TERMS, KEY_SKIP_DESIGNER_WARNING, KEY_TERMS_BODY,
+			KEY_TERMS_VERSION, KEY_DISMISSED_ANNOUNCEMENT, KEY_COSMETIC_LOADOUT, KEY_USAGE_DATA,
+			KEY_DEBUG_UPDATE_TOAST);
 
 	private static final String OFFICIAL_API = "https://api.schematicindex.com";
 
 	private static boolean sounds = true;
 	private static boolean modTags = true;
 	private static boolean ownNametag = true;
+	private static boolean chatNames = true;
+	private static boolean tabNames = true;
 	private static boolean mapCorners;
 	// UNSET until the player chooses a height, so the first use can take their current Y instead
 	private static final int UNSET_HEIGHT = Integer.MIN_VALUE;
@@ -95,6 +109,7 @@ public final class Settings
 	private static boolean tutorialSeen;
 	private static volatile boolean shardWelcomeSeen;
 	private static boolean loaded;
+	private static final Map<String, String> extras = new ConcurrentHashMap<>();
 
 	// Setters schedule one debounced write instead of a full-file write per call, on a daemon thread
 	private static final long SAVE_DEBOUNCE_MS = 500L;
@@ -157,6 +172,28 @@ public final class Settings
 	public static void toggleOwnNametag()
 	{
 		ownNametag = !ownNametag;
+		save();
+	}
+
+	public static boolean chatNames()
+	{
+		return chatNames;
+	}
+
+	public static void toggleChatNames()
+	{
+		chatNames = !chatNames;
+		save();
+	}
+
+	public static boolean tabNames()
+	{
+		return tabNames;
+	}
+
+	public static void toggleTabNames()
+	{
+		tabNames = !tabNames;
 		save();
 	}
 
@@ -509,6 +546,38 @@ public final class Settings
 		save();
 	}
 
+	public static boolean flag(String key, boolean fallback)
+	{
+		String value = extras.get(key);
+		return value == null ? fallback : Boolean.parseBoolean(value.trim());
+	}
+
+	public static void setFlag(String key, boolean value)
+	{
+		putExtra(key, Boolean.toString(value));
+	}
+
+	public static String text(String key, String fallback)
+	{
+		String value = extras.get(key);
+		return value == null ? fallback : value;
+	}
+
+	public static void setText(String key, String value)
+	{
+		putExtra(key, value == null ? "" : value);
+	}
+
+	public static long number(String key, long fallback)
+	{
+		return parseLong(extras.get(key), fallback);
+	}
+
+	public static void setNumber(String key, long value)
+	{
+		putExtra(key, Long.toString(value));
+	}
+
 	public static void load()
 	{
 		if (loaded)
@@ -544,9 +613,21 @@ public final class Settings
 
 		migrate(properties, parseInt(properties.getProperty(KEY_CONFIG_VERSION), 0));
 
+		extras.clear();
+
+		for (String name : properties.stringPropertyNames())
+		{
+			if (!OWN_KEYS.contains(name))
+			{
+				extras.put(name, properties.getProperty(name));
+			}
+		}
+
 		sounds = parse(properties.getProperty(KEY_SOUNDS), true);
 		modTags = parse(properties.getProperty(KEY_MOD_TAGS), true);
 		ownNametag = parse(properties.getProperty(KEY_OWN_NAMETAG), true);
+		chatNames = parse(properties.getProperty(KEY_CHAT_NAMES), true);
+		tabNames = parse(properties.getProperty(KEY_TAB_NAMES), true);
 		mapCorners = parse(properties.getProperty(KEY_MAP_CORNERS), false);
 		cornerHeight = parseInt(properties.getProperty(KEY_CORNER_HEIGHT), UNSET_HEIGHT);
 		loadPresets(properties.getProperty(KEY_MAPART_PRESETS, ""));
@@ -599,10 +680,18 @@ public final class Settings
 	{
 		Path path = FabricLoader.getInstance().getConfigDir().resolve(FILE_NAME);
 		Properties properties = new Properties();
+
+		for (Map.Entry<String, String> entry : extras.entrySet())
+		{
+			properties.setProperty(entry.getKey(), entry.getValue());
+		}
+
 		properties.setProperty(KEY_CONFIG_VERSION, Integer.toString(CONFIG_VERSION));
 		properties.setProperty(KEY_SOUNDS, Boolean.toString(sounds));
 		properties.setProperty(KEY_MOD_TAGS, Boolean.toString(modTags));
 		properties.setProperty(KEY_OWN_NAMETAG, Boolean.toString(ownNametag));
+		properties.setProperty(KEY_CHAT_NAMES, Boolean.toString(chatNames));
+		properties.setProperty(KEY_TAB_NAMES, Boolean.toString(tabNames));
 		properties.setProperty(KEY_MAP_CORNERS, Boolean.toString(mapCorners));
 		properties.setProperty(KEY_MAPART_PRESETS, joinPresets());
 		properties.setProperty(KEY_UI_VOLUME, Integer.toString(uiVolume));
@@ -705,6 +794,21 @@ public final class Settings
 		}
 
 		return out.toString();
+	}
+
+	private static void putExtra(String key, String value)
+	{
+		if (OWN_KEYS.contains(key))
+		{
+			throw new IllegalArgumentException("Reserved settings key " + key);
+		}
+
+		if (value.equals(extras.put(key, value)))
+		{
+			return;
+		}
+
+		save();
 	}
 
 	private static boolean parse(String value, boolean fallback)

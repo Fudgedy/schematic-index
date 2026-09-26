@@ -31,7 +31,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Queue;
 import java.util.Set;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -51,17 +50,6 @@ public final class SchematicPreview
 
 	public static final float MIN_ZOOM = 0.8F;
 
-	// The raytracer only renders at WIDTH x HEIGHT, so a thumbnail is a full frame box-downscaled to here
-	public static final int THUMBNAIL_WIDTH = 240;
-	public static final int THUMBNAIL_HEIGHT = 135;
-
-	// Fixed, so every thumbnail is framed identically regardless of how the user last orbited the preview
-	private static final float THUMBNAIL_YAW = 30.0F;
-	private static final float THUMBNAIL_PITCH = 30.0F;
-	private static final int THUMBNAIL_FOV = 70;
-
-	private static final long THUMBNAIL_TIMEOUT_MS = 30_000L;
-
 	// One short per voxel, so this bounds a downsampled grid to about 8 MB of heap
 	private static final int MAX_VOXELS = 4_000_000;
 
@@ -69,7 +57,9 @@ public final class SchematicPreview
 
 	private static final long MAX_SCHCACHE_BYTES = 256L * 1024 * 1024;
 
-	private static final int BACKGROUND = 0xFF10151A;
+	public static final int BACKGROUND = 0xFF10151A;
+	public static final int BACKGROUND_SKY = 0xFF78A7FF;
+	public static final int BACKGROUND_LIGHT = 0xFFE4E7EA;
 	private static final double FIELD_OF_VIEW = 70.0D;
 
 	private static final double WATER_ALPHA = 0.55D;
@@ -79,6 +69,7 @@ public final class SchematicPreview
 
 	// Caps the idle re-render rate of an animated schematic so its sprites move without pinning the CPU
 	private static final long ANIM_FRAME_MS = 80L;
+	private static final long SLOW_FRAME_MS = 20L;
 
 	private static final int PICKED_BASE = 1_000_000;
 	private static final List<Path> PICKED = new CopyOnWriteArrayList<>();
@@ -174,9 +165,14 @@ public final class SchematicPreview
 	private static double lastEyeZ;
 
 	private static long lastAnimFrame = Long.MIN_VALUE;
+	private static int lastBackground;
+
+	// Photo Mode's own lens and backdrop, so its choices never leak into the Settings FOV or the detail view
+	private static int fovOverride;
+	private static int backgroundOverride = BACKGROUND;
 
 	record View(int slot, float yaw, float pitch, float zoom, boolean cutaway, boolean freeLook,
-			double eyeX, double eyeY, double eyeZ, float maxLayer, int fov)
+			double eyeX, double eyeY, double eyeZ, float maxLayer, int fov, int background)
 	{
 	}
 
@@ -230,6 +226,13 @@ public final class SchematicPreview
 	{
 		Model model = MODELS.get(normalise(slot));
 		return model == null ? -1 : model.sizeY();
+	}
+
+	// {sizeX, sizeY, sizeZ} of the loaded model, for free-fly step and clamp math; null before the model loads
+	public static double @Nullable [] modelSize(int slot)
+	{
+		Model model = MODELS.get(normalise(slot));
+		return model == null ? null : new double[]{model.sizeX(), model.sizeY(), model.sizeZ()};
 	}
 
 	public static int register(Path file)
@@ -530,6 +533,59 @@ public final class SchematicPreview
 		};
 	}
 
+	public static void overrideView(int fov, int background)
+	{
+		fovOverride = fov;
+		backgroundOverride = background;
+	}
+
+	public static void clearOverrides()
+	{
+		fovOverride = 0;
+		backgroundOverride = BACKGROUND;
+	}
+
+	// The zoom whose orbit distance keeps all eight corners of the build inside the frame at this angle
+	public static float fitZoom(int slot, float yaw, float pitch, int fov)
+	{
+		Model model = MODELS.get(normalise(slot));
+
+		if (model == null)
+		{
+			return 1.0F;
+		}
+
+		double yawRadians = Math.toRadians(yaw);
+		double pitchRadians = Math.toRadians(pitch);
+		double forwardX = Math.sin(yawRadians) * Math.cos(pitchRadians);
+		double forwardY = -Math.sin(pitchRadians);
+		double forwardZ = Math.cos(yawRadians) * Math.cos(pitchRadians);
+		double rightLength = Math.max(1.0E-6D, Math.sqrt(forwardX * forwardX + forwardZ * forwardZ));
+		double rightX = -forwardZ / rightLength;
+		double rightZ = forwardX / rightLength;
+		double upX = -rightZ * forwardY;
+		double upY = rightZ * forwardX - rightX * forwardZ;
+		double upZ = rightX * forwardY;
+
+		double tanVertical = Math.tan(Math.toRadians(fov) / 2.0D);
+		double tanHorizontal = tanVertical * renderer.textureWidth() / Math.max(1, renderer.textureHeight());
+		double needed = 1.0D;
+
+		for (int corner = 0; corner < 8; corner++)
+		{
+			double x = ((corner & 1) == 0 ? 0.0D : model.sizeX()) - model.sizeX() / 2.0D;
+			double y = ((corner & 2) == 0 ? 0.0D : model.sizeY()) - model.sizeY() / 2.0D;
+			double z = ((corner & 4) == 0 ? 0.0D : model.sizeZ()) - model.sizeZ() / 2.0D;
+			double depth = x * forwardX + y * forwardY + z * forwardZ;
+			double side = Math.abs(x * rightX + z * rightZ);
+			double up = Math.abs(x * upX + y * upY + z * upZ);
+			needed = Math.max(needed, Math.max(side / tanHorizontal, up / tanVertical) - depth);
+		}
+
+		// A tenth of air around the build, so its silhouette never touches the frame edge
+		return clampZoom(slot, (float) (model.radius() * 2.0D / (needed * 1.1D)));
+	}
+
 	public static void request(int slot, float yaw, float pitch, float zoom, boolean cutaway,
 			boolean freeLook, double @Nullable [] eye, float maxLayer)
 	{
@@ -555,10 +611,12 @@ public final class SchematicPreview
 		Model current = MODELS.get(index);
 		boolean animated = current != null && current.animated();
 		long animFrame = animated ? System.currentTimeMillis() / ANIM_FRAME_MS : 0L;
-		int fov = Settings.previewFov();
+		int fov = fovOverride > 0 ? fovOverride : Settings.previewFov();
+		int background = backgroundOverride;
 
 		if (index == lastSlot && yaw == lastYaw && pitch == lastPitch && zoom == lastZoom
-				&& maxLayer == lastMaxLayer && fov == lastFov && cutaway == lastCutaway && freeLook == lastFreeLook
+				&& maxLayer == lastMaxLayer && fov == lastFov && background == lastBackground
+				&& cutaway == lastCutaway && freeLook == lastFreeLook
 				&& eyeNull == lastEyeNull
 				&& (eyeNull || (eye[0] == lastEyeX && eye[1] == lastEyeY && eye[2] == lastEyeZ))
 				&& (!animated || animFrame == lastAnimFrame))
@@ -573,6 +631,7 @@ public final class SchematicPreview
 		lastZoom = zoom;
 		lastMaxLayer = maxLayer;
 		lastFov = fov;
+		lastBackground = background;
 		lastCutaway = cutaway;
 		lastFreeLook = freeLook;
 		lastEyeNull = eyeNull;
@@ -589,7 +648,7 @@ public final class SchematicPreview
 
 		View wanted = new View(index, yaw, pitch, clampZoom(index, zoom), cutaway, freeLook,
 				from == null ? 0.0D : from[0], from == null ? 0.0D : from[1], from == null ? 0.0D : from[2],
-				Math.max(0.0F, Math.min(1.0F, maxLayer)), fov);
+				Math.max(0.0F, Math.min(1.0F, maxLayer)), fov, background);
 
 		// An animated schematic's View can be identical while its sprite phase has advanced
 		if (!animated && (wanted.equals(queued) || (!rendering && wanted.equals(shown))))
@@ -635,12 +694,21 @@ public final class SchematicPreview
 						viewId = Identifier.fromNamespaceAndPath(SchematicIndexMod.MOD_ID, "preview");
 					}
 
+					long drawStarted = System.nanoTime();
+
 					if (active.renderToTexture(model, view, viewId))
 					{
 						shown = view;
 						renderWidth = active.textureWidth();
 						renderHeight = active.textureHeight();
 						reportFirstFrame(started);
+					}
+
+					long ms = (System.nanoTime() - drawStarted) / 1_000_000L;
+
+					if (ms >= SLOW_FRAME_MS)
+					{
+						SchematicIndexMod.LOGGER.debug("Preview frame took {} ms", ms);
 					}
 				}
 				catch (Exception e)
@@ -729,6 +797,8 @@ public final class SchematicPreview
 			return;
 		}
 
+		long started = System.nanoTime();
+
 		// Only the sprite/shape bake needs the block renderer; it hops back to the client thread later
 		Net.submit(() -> {
 			Path file = null;
@@ -792,14 +862,14 @@ public final class SchematicPreview
 			// LOADING stays set until registerModel clears it, so request() cannot re-enter load()
 			Draft ready = draft;
 			Path source = file;
-			Minecraft.getInstance().execute(() -> registerModel(index, ready, source));
+			Minecraft.getInstance().execute(() -> registerModel(index, ready, source, started));
 		});
 	}
 
 	// Palette entries baked per client frame. Baking a whole palette at once hitched a visible frame
 	private static final int BAKE_CHUNK = 48;
 
-	private static void registerModel(int index, Draft draft, Path file)
+	private static void registerModel(int index, Draft draft, Path file, long started)
 	{
 		// Not in LOADING means releaseAll or clearCache ran mid-parse, so this result is stale
 		if (!LOADING.contains(index))
@@ -809,11 +879,12 @@ public final class SchematicPreview
 		}
 
 		BlockShapes.Shape[] palette = new BlockShapes.Shape[draft.states().size()];
-		bakeChunk(index, draft, file, palette, 0);
+		bakeChunk(index, draft, file, palette, 0, started);
 	}
 
 	// The Model is not published until the whole palette is baked, so a partial one is never traced
-	private static void bakeChunk(int index, Draft draft, Path file, BlockShapes.Shape[] palette, int start)
+	private static void bakeChunk(int index, Draft draft, Path file, BlockShapes.Shape[] palette, int start,
+			long started)
 	{
 		if (!LOADING.contains(index))
 		{
@@ -856,7 +927,7 @@ public final class SchematicPreview
 
 		if (end < count)
 		{
-			Minecraft.getInstance().execute(() -> bakeChunk(index, draft, file, palette, end));
+			Minecraft.getInstance().execute(() -> bakeChunk(index, draft, file, palette, end, started));
 			return;
 		}
 
@@ -865,6 +936,8 @@ public final class SchematicPreview
 			MODELS.put(index, finish(draft, palette));
 			touchModel(index);
 			evictModels(index);
+			SchematicIndexMod.LOGGER.debug("Built the preview model for {} in {} ms", file.getFileName(),
+					(System.nanoTime() - started) / 1_000_000L);
 		}
 		catch (Exception e)
 		{
@@ -2042,125 +2115,8 @@ public final class SchematicPreview
 		}
 	}
 
-	// Never blocks, and completes on whichever pipeline thread finished the work
-	public static CompletableFuture<byte[]> renderThumbnail(Path file)
-	{
-		return renderThumbnail(register(file));
-	}
-
-	public static CompletableFuture<byte[]> renderThumbnail(int slot)
-	{
-		CompletableFuture<byte[]> future = new CompletableFuture<>();
-		int index = normalise(slot);
-
-		if (index < 0 || !hasSource(index))
-		{
-			future.complete(null);
-			return future;
-		}
-
-		long deadline = System.currentTimeMillis() + THUMBNAIL_TIMEOUT_MS;
-		Minecraft.getInstance().execute(() -> awaitThumbnail(index, future, deadline));
-		return future;
-	}
-
-	private static void awaitThumbnail(int index, CompletableFuture<byte[]> future, long deadline)
-	{
-		Model model = MODELS.get(index);
-
-		if (model != null)
-		{
-			View view = new View(index, THUMBNAIL_YAW, THUMBNAIL_PITCH, clampZoom(index, 1.0F), false, false,
-					0.0D, 0.0D, 0.0D, 1.0F, THUMBNAIL_FOV);
-			Consumer<NativeImage> sink = full -> encodeThumbnail(full, future);
-
-			// awaitThumbnail already runs on the client thread, which a GPU renderer draws from; its
-			// fence-deferred readback hands the frame to sink on a later frame
-			if (renderer.requiresRenderThread())
-			{
-				try
-				{
-					renderer.renderAsync(model, view, null, sink);
-				}
-				catch (Exception e)
-				{
-					SchematicIndexMod.LOGGER.warn("Could not render thumbnail", e);
-					future.complete(null);
-				}
-
-				return;
-			}
-
-			Net.submit(() -> {
-				try
-				{
-					renderer.renderAsync(model, view, null, sink);
-				}
-				catch (Throwable e)
-				{
-					SchematicIndexMod.LOGGER.warn("Could not render thumbnail", e);
-					future.complete(null);
-				}
-			});
-			return;
-		}
-
-		if (FAILED.containsKey(index))
-		{
-			future.complete(null);
-			return;
-		}
-
-		if (System.currentTimeMillis() > deadline)
-		{
-			future.complete(null);
-			return;
-		}
-
-		if (!LOADING.contains(index))
-		{
-			load(index);
-		}
-
-		Minecraft.getInstance().execute(() -> awaitThumbnail(index, future, deadline));
-	}
-
-	// Owns full; the downscale and encode run on the Net pool whichever thread delivered the frame
-	private static void encodeThumbnail(@Nullable NativeImage full, CompletableFuture<byte[]> future)
-	{
-		if (full == null)
-		{
-			future.complete(null);
-			return;
-		}
-
-		Net.submit(() -> {
-			NativeImage thumb = null;
-
-			try
-			{
-				thumb = downscale(full, THUMBNAIL_WIDTH, THUMBNAIL_HEIGHT);
-				future.complete(pngBytes(thumb));
-			}
-			catch (Throwable e)
-			{
-				SchematicIndexMod.LOGGER.warn("Could not render thumbnail", e);
-				future.complete(null);
-			}
-			finally
-			{
-				full.close();
-
-				if (thumb != null)
-				{
-					thumb.close();
-				}
-			}
-		});
-	}
-
-	// Box-averaged rather than nearest-neighbour, so thumbnails are smooth instead of aliased
-	private static NativeImage downscale(NativeImage source, int outWidth, int outHeight)
+	// Box-averaged rather than nearest-neighbour, so downscaled photos are smooth instead of aliased
+	public static NativeImage downscale(NativeImage source, int outWidth, int outHeight)
 	{
 		NativeImage out = new NativeImage(source.format(), outWidth, outHeight, false);
 		int inWidth = source.getWidth();

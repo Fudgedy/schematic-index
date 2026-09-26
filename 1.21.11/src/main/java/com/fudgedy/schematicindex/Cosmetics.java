@@ -2,11 +2,13 @@ package com.fudgedy.schematicindex;
 
 import com.fudgedy.schematicindex.catalogue.CosmeticColors;
 import com.fudgedy.schematicindex.catalogue.CosmeticTags;
+import com.fudgedy.schematicindex.fx.Effect;
+import com.fudgedy.schematicindex.fx.EffectGlyphs;
+import com.fudgedy.schematicindex.fx.Effects;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.network.chat.Style;
 import net.minecraft.network.chat.TextColor;
-import net.minecraft.util.Util;
 
 import java.util.Arrays;
 import java.util.HashSet;
@@ -24,12 +26,25 @@ public final class Cosmetics
 		PRESET
 	}
 
-	public record Preset(String name, int[] stops)
+	// UNPRICED falls back to the flat preset price, a served 0 is free; the window fields only come from the server list
+	public record Preset(String name, int[] stops, int price, boolean limited, long untilMs, boolean vaulted)
 	{
+		public static final int UNPRICED = -1;
+
+		public Preset(String name, int[] stops)
+		{
+			this(name, stops, UNPRICED, false, 0L, false);
+		}
 	}
 
 	public record Worn(int[] stops, CosmeticTags.Tag tag, Set<String> effects)
 	{
+		// The one worn effect or null; taken in shop order should a peer's row ever carry two
+		public String effect()
+		{
+			return effectIn(this.effects);
+		}
+
 		public boolean hasShine()
 		{
 			return this.effects.contains(SHINE);
@@ -42,21 +57,18 @@ public final class Cosmetics
 	}
 
 	public static final int GRADIENT_SLOTS = 3;
+	public static final String OBFUSCATED_FIRST = "obfuscated_first";
 	public static final int EMPTY = -1;
 	public static final String SHINE = "shine";
 	public static final String FLOW = "flow";
-	// Light grey rather than white so the sweep still reads on an uncoloured name
-	public static final int SHINE_BASE = 0xD8DEE3;
-	private static final float NO_PHASE = -1.0F;
-	private static final long SHINE_PERIOD_MS = 4000L;
-	private static final float SHINE_SWEEP_MS = 2500.0F;
-	// Half-width in glyphs, so the band covers three; capped well short of white to keep the colour underneath
-	private static final float SHINE_BAND = 1.5F;
-	private static final float SHINE_STRENGTH = 0.45F;
-	private static final long FLOW_PERIOD_MS = 3000L;
-	// Flow over an uncoloured name cycles the hue wheel instead, kept pastel so it stays legible
-	private static final float FLOW_RAINBOW_SATURATION = 0.65F;
+	public static final String WAVE = "wave";
+	public static final String PULSE = "pulse";
+	public static final String NEON = "neon";
+	public static final String FROZEN = "frozen";
+	public static final String MOLTEN = "molten";
+	public static final String TOXIC = "toxic";
 
+	// The offline fallback; once /me/cosmetics answers, presets() is the server's list
 	public static final List<Preset> PRESETS = List.of(
 			new Preset("Emerald", new int[] {0x2A7A5B, 0xFFFFFF}),
 			new Preset("Amethyst", new int[] {0x8B69CA, 0xE0C3FC}),
@@ -67,6 +79,7 @@ public final class Cosmetics
 			new Preset("Flamingo", new int[] {0xFC8EAC, 0xFFFFFF}),
 			new Preset("Lunar", new int[] {0x555555, 0xFFFFFF}),
 			new Preset("Midnight", new int[] {0x000000, 0x8A8A8A}));
+
 
 	private static final int[] GRADIENT = new int[GRADIENT_SLOTS];
 	private static final Set<String> EFFECTS = new HashSet<>();
@@ -93,6 +106,12 @@ public final class Cosmetics
 	{
 		mode = value;
 		store();
+	}
+
+	public static List<Preset> presets()
+	{
+		List<Preset> served = CosmeticColors.presets();
+		return served.isEmpty() ? PRESETS : served;
 	}
 
 	public static void wearPreset(Preset preset)
@@ -169,6 +188,11 @@ public final class Cosmetics
 		store();
 	}
 
+	public static String effect()
+	{
+		return effectIn(EFFECTS);
+	}
+
 	public static boolean hasShine()
 	{
 		return EFFECTS.contains(SHINE);
@@ -235,7 +259,7 @@ public final class Cosmetics
 
 		if (parts.length >= 2 && parts[0].equals(Mode.PRESET.name()))
 		{
-			for (Preset preset : PRESETS)
+			for (Preset preset : presets())
 			{
 				if (preset.name().equals(parts[1]))
 				{
@@ -265,7 +289,7 @@ public final class Cosmetics
 
 		for (String id : saved.split(","))
 		{
-			if (!id.isEmpty() && CosmeticColors.ownsEffect(id))
+			if (Effects.has(id) && CosmeticColors.ownsEffect(id))
 			{
 				EFFECTS.add(id);
 			}
@@ -315,23 +339,34 @@ public final class Cosmetics
 
 	public static Component apply(String name)
 	{
-		return apply(name, Style.EMPTY);
+		return apply(name, Style.EMPTY, effect(), true);
 	}
 
-	// base carries whatever the surrounding text already styled the name with, so bold or italic survive the recolour
-	public static Component apply(String name, Style base)
+	// base carries whatever the surrounding text already styled the name with, so bold or italic survive. A name
+	// inline in chat or the tab list is not floating and takes the one-line effect frame
+	public static Component apply(String name, Style base, boolean floating)
 	{
-		return apply(name, base, hasShine(), hasFlow());
+		return apply(name, base, effect(), floating);
 	}
 
-	public static Component apply(String name, Style base, boolean shine, boolean flow)
+	public static Component apply(String name, Style base, String effect)
 	{
-		return preview(name, wornStops(), base, shine, flow);
+		return apply(name, base, effect, true);
+	}
+
+	public static Component apply(String name, Style base, String effect, boolean floating)
+	{
+		return dressed(name, wornStops(), base, effect, floating);
 	}
 
 	public static Component preview(String name, int[] stops, Style base, boolean shine, boolean flow)
 	{
-		return colored(name, stops, base, shine ? shinePhase() : NO_PHASE, flow ? flowPhase() : NO_PHASE);
+		return preview(name, stops, base, effectOf(shine, flow));
+	}
+
+	public static Component preview(String name, int[] stops, Style base, String effect)
+	{
+		return dressed(name, stops, base, effect, true);
 	}
 
 	public static boolean isWorn()
@@ -348,8 +383,31 @@ public final class Cosmetics
 
 	public static Component tagOf(CosmeticTags.Tag tag)
 	{
-		return colored(tag.bracketOpen() + tag.label() + tag.bracketClose(),
-				tag.gradient() ? tag.colors() : new int[] {tag.colors()[0]}, styleOf(tag));
+		String text = tag.bracketOpen() + tag.label() + tag.bracketClose();
+		int[] stops = tag.gradient() ? tag.colors() : new int[] {tag.colors()[0]};
+
+		if (tag.label().isEmpty() || !tag.styles().contains(OBFUSCATED_FIRST))
+		{
+			return colored(text, stops, styleOf(tag));
+		}
+
+		return scrambledAt(text, stops, styleOf(tag), tag.bracketOpen().codePointCount(0, tag.bracketOpen().length()));
+	}
+
+	// Glyph by glyph like colored(), with only the one at index obfuscated
+	private static Component scrambledAt(String text, int[] stops, Style base, int index)
+	{
+		MutableComponent out = Component.empty();
+		int[] glyphs = text.codePoints().toArray();
+
+		for (int i = 0; i < glyphs.length; i++)
+		{
+			float t = glyphs.length == 1 ? 0.0F : (float) i / (glyphs.length - 1);
+			Style style = base.withColor(TextColor.fromRgb(sample(stops, t))).withObfuscated(i == index || base.isObfuscated());
+			out.append(Component.literal(Character.toString(glyphs[i])).withStyle(style));
+		}
+
+		return out;
 	}
 
 	private static Style styleOf(CosmeticTags.Tag tag)
@@ -363,89 +421,98 @@ public final class Cosmetics
 				.withObfuscated(styles.contains("obfuscated"));
 	}
 
+
+
+
+
 	public static Component applyWorn(String name, Worn other)
 	{
-		return applyWorn(name, other, Style.EMPTY);
+		return applyWorn(name, other, Style.EMPTY, true);
 	}
 
-	public static Component applyWorn(String name, Worn other, Style base)
+	public static Component applyWorn(String name, Worn other, Style base, boolean floating)
 	{
-		return colored(name, other.stops(), base, other.hasShine() ? shinePhase() : NO_PHASE,
-				other.hasFlow() ? flowPhase() : NO_PHASE);
+		return dressed(name, other.stops(), base, other.effect(), floating);
 	}
+
+	// An effect draws the whole name as one glyph laid out for this IGN; a name the font sheet cannot draw keeps
+	// its plain colours. Chat and the tab list take the one-line frame so nothing spills onto neighbouring lines
+	private static Component dressed(String name, int[] stops, Style base, String effect, boolean floating)
+	{
+		String glyph = effect == null || name.isEmpty() ? null : EffectGlyphs.glyphFor(name, effect, stops, !floating);
+
+		if (glyph == null)
+		{
+			return colored(name, stops, base);
+		}
+
+		return Component.literal(glyph).withStyle(base.withFont(EffectGlyphs.FONT).withColor(TextColor.fromRgb(0xFFFFFF))
+				.withBold(false).withItalic(false).withObfuscated(false));
+	}
+
+
+
+
+
 
 	public static int[] wornStops()
 	{
 		return mode == Mode.PRESET ? presetStops.clone() : mode == Mode.GRADIENT ? gradientStops() : new int[0];
 	}
 
-	// 2.5 s sweep then 1.5 s rest, on the shared clock so every shining name on screen moves together
-	public static float shinePhase()
-	{
-		return Math.min(1.0F, (Util.getMillis() % SHINE_PERIOD_MS) / SHINE_SWEEP_MS);
-	}
 
-	// One full loop every three seconds on the shared clock, so every flowing name moves in step
-	public static float flowPhase()
-	{
-		return (Util.getMillis() % FLOW_PERIOD_MS) / (float) FLOW_PERIOD_MS;
-	}
 
 	private static Component colored(String text, int[] stops, Style base)
 	{
-		return colored(text, stops, base, NO_PHASE, NO_PHASE);
-	}
-
-	// A flow phase in [0,1] slides the stops rightward as a closed loop; a shine phase sweeps a three-glyph band over it
-	private static Component colored(String text, int[] stops, Style base, float shinePhase, float flowPhase)
-	{
-		boolean shine = shinePhase >= 0.0F;
-		boolean flow = flowPhase >= 0.0F;
-
-		if (text.isEmpty() || (stops.length == 0 && !shine && !flow))
+		if (text.isEmpty() || stops.length == 0)
 		{
 			return Component.literal(text).withStyle(base);
 		}
 
-		if (stops.length == 1 && !shine)
+		if (stops.length == 1)
 		{
 			return Component.literal(text).withStyle(base.withColor(TextColor.fromRgb(stops[0])));
 		}
 
 		MutableComponent out = Component.empty();
-		int glyphs = text.length();
-		float band = shinePhase * (glyphs + SHINE_BAND * 2) - SHINE_BAND;
+		int[] glyphs = text.codePoints().toArray();
 
-		for (int i = 0; i < glyphs; i++)
+		// By code point: a tag's supplementary glyph split into lone surrogates would draw as two missing boxes
+		for (int i = 0; i < glyphs.length; i++)
 		{
-			float t = glyphs == 1 ? 0.0F : (float) i / (glyphs - 1);
-			int color;
-
-			if (flow && stops.length == 0)
-			{
-				color = hsvToRgb((float) i / glyphs - flowPhase, FLOW_RAINBOW_SATURATION, 1.0F);
-			}
-			else if (flow)
-			{
-				color = sampleLoop(stops, t - flowPhase);
-			}
-			else
-			{
-				color = stops.length == 0 ? SHINE_BASE : sample(stops, t);
-			}
-
-			if (shine)
-			{
-				float weight = Math.max(0.0F, 1.0F - Math.abs(i - band) / SHINE_BAND);
-				color = lerp(color, 0xFFFFFF, SHINE_STRENGTH * weight);
-			}
-
-			out.append(Component.literal(String.valueOf(text.charAt(i)))
-					.withStyle(base.withColor(TextColor.fromRgb(color))));
+			float t = glyphs.length == 1 ? 0.0F : (float) i / (glyphs.length - 1);
+			out.append(Component.literal(Character.toString(glyphs[i])).withStyle(base.withColor(TextColor.fromRgb(sample(stops, t)))));
 		}
 
 		return out;
 	}
+
+
+
+
+	// Older callers pass the pair; shine wins, since only one effect is ever worn
+	private static String effectOf(boolean shine, boolean flow)
+	{
+		return shine ? SHINE : flow ? FLOW : null;
+	}
+
+	private static String effectIn(Set<String> effects)
+	{
+		for (Effect effect : Effects.all())
+		{
+			if (effects.contains(effect.id()))
+			{
+				return effect.id();
+			}
+		}
+
+		return null;
+	}
+
+
+
+
+
 
 	public static int sample(int[] stops, float t)
 	{
@@ -460,19 +527,6 @@ public final class Cosmetics
 		return lerp(stops[index], stops[index + 1], scaled - index);
 	}
 
-	// The stops as a ring, last blending back into first, so a sliding offset never shows a seam
-	private static int sampleLoop(int[] stops, float t)
-	{
-		if (stops.length == 1)
-		{
-			return stops[0];
-		}
-
-		float wrapped = (t % 1.0F + 1.0F) % 1.0F;
-		float scaled = wrapped * stops.length;
-		int index = Math.min((int) scaled, stops.length - 1);
-		return lerp(stops[index], stops[(index + 1) % stops.length], scaled - index);
-	}
 
 	private static int lerp(int a, int b, float t)
 	{

@@ -26,6 +26,7 @@ public final class MapartMaterialsPanel
 	private final Rect listBounds = new Rect();
 	private final Rect maxToggle = new Rect();
 	private final Rect saveButton = new Rect();
+	private final Rect previewButton = new Rect();
 	private float scroll;
 	private float maxScroll;
 
@@ -58,6 +59,18 @@ public final class MapartMaterialsPanel
 		else
 		{
 			Buttons.disabled(ctx, font, this.saveButton, "Save materials list");
+		}
+
+		y += IndexScreen.FIELD_HEIGHT + ROW_GAP;
+		this.previewButton.set(x, y, width, IndexScreen.FIELD_HEIGHT);
+
+		if (MapartSession.ready())
+		{
+			Buttons.pill(ctx, font, this.previewButton, "Export preview PNG", mouseX, mouseY, false);
+		}
+		else
+		{
+			Buttons.disabled(ctx, font, this.previewButton, "Export preview PNG");
 		}
 
 		y += IndexScreen.FIELD_HEIGHT + ROW_GAP + 2;
@@ -137,6 +150,13 @@ public final class MapartMaterialsPanel
 		{
 			MapartUi.press(this.saveButton);
 			MapartSession.saveMaterials();
+			return true;
+		}
+
+		if (this.previewButton.contains(mouseX, mouseY) && MapartSession.ready())
+		{
+			MapartUi.press(this.previewButton);
+			MapartPreviewExport.save();
 			return true;
 		}
 

@@ -37,8 +37,11 @@ public abstract class LitematicaMainMenuMixin extends GuiBase
 	@Inject(method = "initGui", at = @At("RETURN"), remap = false)
 	private void schematicindex$addLibraryButton(CallbackInfo info)
 	{
-		int buttonWidth = schematicindex$columnWidth();
-		int x = 12 + buttonWidth + 20;
+		int columnWidth = schematicindex$columnWidth();
+		int x = 12 + columnWidth + 20;
+		// ButtonGeneric starts a left-aligned label 6 px in, past the icon and a 2 px gap
+		int labelWidth = 6 + IndexIcon.INSTANCE.getWidth() + 2 + this.getStringWidth(SCHEMATICINDEX$LABEL) + 6;
+		int buttonWidth = Math.max(columnWidth, labelWidth);
 
 		IconButton button = new IconButton(x, 52, buttonWidth, 20, SCHEMATICINDEX$LABEL, IndexIcon.INSTANCE);
 		button.setTextCentered(false);

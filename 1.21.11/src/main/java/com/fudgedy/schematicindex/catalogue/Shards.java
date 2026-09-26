@@ -25,7 +25,8 @@ import java.util.function.IntConsumer;
 // so the holder replaces its state from whatever the server sends back
 public final class Shards
 {
-	public record Day(int day, int reward, String state)
+	// frozen marks a missed day a Streak Freeze covered; the state is whatever the strip would show anyway
+	public record Day(int day, int reward, String state, boolean frozen)
 	{
 	}
 
@@ -46,6 +47,10 @@ public final class Shards
 
 	public static final int DEFAULT_REFERRAL_REWARD = 200;
 	public static final int DEFAULT_STREAK_REQUIRED = 3;
+	public static final int DEFAULT_FREEZE_PRICE = 200;
+	public static final int DEFAULT_FREEZE_MAX = 3;
+	// Ceiling on the freeze count the panel will lay out, so the slot loop stays bounded whatever the field holds
+	private static final int FREEZE_MAX_CAP = 12;
 
 	private static final long BALANCE_TWEEN_MS = 600L;
 	private static final long STREAK_RISK_MS = 6L * 3_600_000L;
@@ -61,12 +66,18 @@ public final class Shards
 	private static volatile boolean claimedToday;
 	private static volatile long weekResetsAt;
 	private static volatile long streakBreaksAt;
+	private static volatile int freezes;
+	private static volatile int freezePrice = DEFAULT_FREEZE_PRICE;
+	private static volatile int freezeMax = DEFAULT_FREEZE_MAX;
 	private static volatile List<Day> days = List.of();
 	private static volatile List<Quest> quests = List.of();
 	private static volatile Referral referral;
 	private static volatile boolean loading;
+	private static volatile boolean loadFailed;
 	private static volatile boolean loadingReferral;
 	private static volatile boolean redeeming;
+	private static volatile boolean buyingFreeze;
+	private static volatile boolean claimingDaily;
 	private static int shownFrom;
 	private static int shownTarget;
 	private static long shownSince;
@@ -129,7 +140,22 @@ public final class Shards
 		}
 
 		long remaining = Math.max(0L, streakBreaksAt - System.currentTimeMillis());
-		return "Streak breaks in " + remaining / 3_600_000L + "h " + remaining % 3_600_000L / 60_000L + "m";
+		return "Streak ends in " + remaining / 3_600_000L + "h " + remaining % 3_600_000L / 60_000L + "m";
+	}
+
+	public static int freezes()
+	{
+		return freezes;
+	}
+
+	public static int freezePrice()
+	{
+		return freezePrice;
+	}
+
+	public static int freezeMax()
+	{
+		return freezeMax;
 	}
 
 	public static Referral referral()
@@ -140,6 +166,31 @@ public final class Shards
 	public static boolean isRedeeming()
 	{
 		return redeeming;
+	}
+
+	public static boolean isBuyingFreeze()
+	{
+		return buyingFreeze;
+	}
+
+	public static boolean isLoading()
+	{
+		return loading;
+	}
+
+	public static boolean loadFailed()
+	{
+		return loadFailed;
+	}
+
+	public static boolean isLoadingReferral()
+	{
+		return loadingReferral;
+	}
+
+	public static boolean isClaimingDaily()
+	{
+		return claimingDaily;
 	}
 
 	// The balance as the pill draws it this frame, counting toward the real one so a claim or purchase reads as motion
@@ -185,7 +236,9 @@ public final class Shards
 		Net.submit(() -> {
 			try
 			{
-				apply(Backend.myShards());
+				JsonObject panel = Backend.myShards();
+				loadFailed = panel == null;
+				apply(panel);
 			}
 			finally
 			{
@@ -211,27 +264,80 @@ public final class Shards
 	// onClaimed receives the shards earned, on the client thread, only once the server has credited them
 	public static void claimDaily(IntConsumer onClaimed)
 	{
+		if (claimingDaily)
+		{
+			return;
+		}
+
+		claimingDaily = true;
 		int before = balance;
 		Net.submit(() -> {
-			JsonObject panel = Backend.claimDaily();
-
-			if (panel == null)
+			try
 			{
-				fail(Errors.SHARD_DAILY, "Could not claim today's reward, try again in a moment.");
-				return;
-			}
+				JsonObject panel = Backend.claimDaily();
 
-			apply(panel);
-			int earned = balance - before;
-			Minecraft.getInstance().execute(() -> {
-				onClaimed.accept(earned);
-
-				if (earned > 0)
+				if (panel == null)
 				{
-					Toasts.push("Daily Login", "You earned " + earned + " shards, come back tomorrow to claim more shards.",
-							new ItemStack(Items.AMETHYST_SHARD));
+					fail(Errors.SHARD_DAILY, "Could not claim today's reward, try again in a moment.");
+					return;
 				}
-			});
+
+				apply(panel);
+				int earned = balance - before;
+				Minecraft.getInstance().execute(() -> {
+					onClaimed.accept(earned);
+
+					if (earned > 0)
+					{
+						Toasts.push("Daily Login", "You earned " + earned + " shards, come back tomorrow to claim more shards.",
+								new ItemStack(Items.AMETHYST_SHARD));
+					}
+				});
+			}
+			finally
+			{
+				claimingDaily = false;
+			}
+		});
+	}
+
+	// onSpent receives the shards the freeze cost, on the client thread, only once the server has taken them
+	public static void buyFreeze(IntConsumer onSpent)
+	{
+		if (buyingFreeze)
+		{
+			return;
+		}
+
+		buyingFreeze = true;
+		int before = balance;
+		Net.submit(() -> {
+			try
+			{
+				Backend.ApiResult result = Backend.buyFreeze();
+				SchematicIndexMod.LOGGER.debug("streak/freeze/buy -> {} {}", result.status(), result.error());
+
+				if (result.ok())
+				{
+					apply(result.body());
+					int spent = before - balance;
+					Minecraft.getInstance().execute(() -> onSpent.accept(spent));
+					return;
+				}
+
+				// Only a stale panel reaches the cap; the refreshed count greys the pill out by itself
+				if (result.is("freeze_max"))
+				{
+					refresh();
+					return;
+				}
+
+				Minecraft.getInstance().execute(() -> Toasts.shopRefusal(result, "a Streak Freeze", Errors.SHARD_FREEZE));
+			}
+			finally
+			{
+				buyingFreeze = false;
+			}
 		});
 	}
 
@@ -408,6 +514,9 @@ public final class Shards
 		claimedToday = boolOf(o, "claimedToday");
 		weekResetsAt = Json.longOf(o, "weekResetsAt", 0L);
 		streakBreaksAt = Json.longOf(o, "streakBreaksAt", 0L);
+		freezes = intOf(o, "freezes");
+		freezePrice = intOr(o, "freezePrice", DEFAULT_FREEZE_PRICE);
+		freezeMax = Math.max(0, Math.min(intOr(o, "freezeMax", DEFAULT_FREEZE_MAX), FREEZE_MAX_CAP));
 		days = parseDays(o);
 		List<Quest> before = quests;
 		quests = parseQuests(o);
@@ -415,6 +524,7 @@ public final class Shards
 		McAuth.setShards(balance);
 		toastReferralNews(o);
 		toastStreakRisk();
+		DiscordLink.onShardsPanel(o);
 	}
 
 	// Once per launch, so the minute poll does not nag; the pill keeps pulsing until the claim lands
@@ -511,7 +621,7 @@ public final class Shards
 				}
 
 				JsonObject d = element.getAsJsonObject();
-				out.add(new Day(intOf(d, "day"), intOf(d, "reward"), stringOf(d, "state")));
+				out.add(new Day(intOf(d, "day"), intOf(d, "reward"), stringOf(d, "state"), boolOf(d, "frozen")));
 			}
 		}
 

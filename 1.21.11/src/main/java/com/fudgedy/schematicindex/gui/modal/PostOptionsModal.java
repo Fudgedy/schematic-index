@@ -6,6 +6,7 @@ import com.fudgedy.schematicindex.gui.Theme;
 import com.fudgedy.schematicindex.gui.widget.Buttons;
 import com.fudgedy.schematicindex.gui.widget.ModalChrome;
 import com.fudgedy.schematicindex.gui.widget.Rect;
+import com.fudgedy.schematicindex.gui.widget.Tooltip;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.input.KeyEvent;
@@ -13,13 +14,19 @@ import org.jetbrains.annotations.Nullable;
 
 public class PostOptionsModal
 {
+	private static final int WIDTH = 208;
+	private static final int KEY_ESCAPE = 256;
+
 	private final IndexScreen screen;
 	private boolean open;
+	private long openedAt;
 	private @Nullable String id;
 	private @Nullable String title;
+	private String subtitle = "";
 	private final Rect edit = new Rect();
 	private final Rect unpublish = new Rect();
 	private final Rect cancel = new Rect();
+	private final Rect close = new Rect();
 	private final Rect bounds = new Rect();
 
 	public PostOptionsModal(IndexScreen screen)
@@ -36,7 +43,7 @@ public class PostOptionsModal
 	{
 		SchematicEntry entry = null;
 
-		for (SchematicEntry e : this.screen.myPosts)
+		for (SchematicEntry e : this.screen.dashboardPage.stats.posts)
 		{
 			if (e.id().equals(id))
 			{
@@ -51,8 +58,11 @@ public class PostOptionsModal
 		}
 
 		this.open = true;
+		this.openedAt = System.currentTimeMillis();
 		this.id = id;
 		this.title = entry.title();
+		this.subtitle = entry.category().label() + " · Published " + entry.agoLabel();
+		this.screen.modalFocus = -1;
 	}
 
 	public void render(GuiGraphics ctx, int mouseX, int mouseY)
@@ -63,31 +73,42 @@ public class PostOptionsModal
 		}
 
 		Font font = this.screen.font();
-		ctx.fill(0, 0, this.screen.width, this.screen.height, Theme.SCRIM);
-
-		int pad = 16;
-		int cardWidth = Math.min(this.screen.width - 40, 300);
 		int line = font.lineHeight;
-		int cardHeight = pad + line + 14 + IndexScreen.FIELD_HEIGHT + pad;
-		int x = (this.screen.width - cardWidth) / 2;
-		int y = (this.screen.height - cardHeight) / 2;
-		this.bounds.set(x, y, cardWidth, cardHeight);
+		int buttonsHeight = Theme.H_CONTROL * 3 + Theme.SPACE_S * 2;
+		int height = Theme.SPACE_M + Theme.ICON_M + Theme.SPACE_XS + line + Theme.SPACE_L + buttonsHeight
+				+ Theme.SPACE_L;
+		int titleWidth = Math.min(WIDTH, this.screen.width - Theme.SPACE_L * 2) - Theme.SPACE_L * 2 - Theme.ICON_M
+				- Theme.SPACE_S;
+		String name = this.title == null ? "" : this.title;
+		String shown = Theme.clipBold(font, name, titleWidth);
 
-		ModalChrome.frame(ctx, x, y, cardWidth, cardHeight, false);
-		Theme.text(ctx, font, Theme.bold(Theme.clip(font, this.title, cardWidth - pad * 2)), x + pad, y + pad,
-				Theme.TEXT);
+		ModalChrome.open(ctx, font, this.bounds, this.screen.width, this.screen.height, WIDTH, height, shown, null,
+				this.close, this.openedAt, mouseX, mouseY);
+		int x = this.bounds.x;
+		int y = this.bounds.y;
+		int w = this.bounds.width;
+		int headerY = y + Theme.SPACE_M;
 
-		int btnY = y + cardHeight - pad - IndexScreen.FIELD_HEIGHT;
-		int editWidth = font.width(Theme.bold("Edit")) + 20;
-		int cancelWidth = font.width(Theme.bold("Cancel")) + 20;
-		int unpubWidth = font.width(Theme.bold("Unpublish")) + 20;
-		this.cancel.set(x + pad, btnY, cancelWidth, IndexScreen.FIELD_HEIGHT);
-		this.edit.set(x + (cardWidth - editWidth) / 2, btnY, editWidth, IndexScreen.FIELD_HEIGHT);
-		this.unpublish.set(x + cardWidth - pad - unpubWidth, btnY, unpubWidth, IndexScreen.FIELD_HEIGHT);
+		if (!shown.equals(name) && Theme.inside(mouseX, mouseY, x + Theme.SPACE_L, headerY, titleWidth, Theme.ICON_M))
+		{
+			Tooltip.show(name);
+		}
 
-		Buttons.pill(ctx, font, this.edit, "Edit", mouseX, mouseY, true);
-		Buttons.pill(ctx, font, this.cancel, "Cancel", mouseX, mouseY, false);
-		Buttons.danger(ctx, font, this.unpublish, "Unpublish", mouseX, mouseY);
+		Theme.text(ctx, font, Theme.clip(font, this.subtitle, w - Theme.SPACE_L * 2), x + Theme.SPACE_L,
+				headerY + Theme.ICON_M + Theme.SPACE_XS, Theme.TEXT_ASH);
+
+		int buttonW = w - Theme.SPACE_L * 2;
+		int buttonX = x + Theme.SPACE_L;
+		int cancelY = y + this.bounds.height - Theme.SPACE_L - Theme.H_CONTROL;
+		int unpublishY = cancelY - Theme.SPACE_S - Theme.H_CONTROL;
+		int editY = unpublishY - Theme.SPACE_S - Theme.H_CONTROL;
+		this.edit.set(buttonX, editY, buttonW, Theme.H_CONTROL);
+		this.unpublish.set(buttonX, unpublishY, buttonW, Theme.H_CONTROL);
+		this.cancel.set(buttonX, cancelY, buttonW, Theme.H_CONTROL);
+		Buttons.button(ctx, font, this.edit, "Edit", Buttons.Kind.PRIMARY, true, mouseX, mouseY);
+		Buttons.button(ctx, font, this.unpublish, "Unpublish", Buttons.Kind.DANGER, true, mouseX, mouseY);
+		Buttons.button(ctx, font, this.cancel, "Cancel", Buttons.Kind.SECONDARY, true, mouseX, mouseY);
+		Tooltip.render(ctx, font, mouseX, mouseY, this.screen.width, this.screen.height);
 	}
 
 	public boolean mouseClicked(double mouseX, double mouseY)
@@ -99,25 +120,16 @@ public class PostOptionsModal
 
 		if (this.edit.contains(mouseX, mouseY))
 		{
-			Theme.click(1.1F);
-			String id = this.id;
-			this.open = false;
-
-			if (id != null)
-			{
-				this.screen.openEditPost(id);
-			}
+			this.doEdit();
 		}
 		else if (this.unpublish.contains(mouseX, mouseY))
 		{
-			Theme.click(0.9F);
-			this.open = false;
-			this.screen.unpublishModal.open(this.id, this.title);
+			this.doUnpublish();
 		}
-		else if (this.cancel.contains(mouseX, mouseY) || !this.bounds.contains(mouseX, mouseY))
+		else if (this.cancel.contains(mouseX, mouseY) || this.close.contains(mouseX, mouseY)
+				|| !this.bounds.contains(mouseX, mouseY))
 		{
-			Theme.click(0.9F);
-			this.open = false;
+			this.doCancel();
 		}
 
 		return true;
@@ -130,11 +142,58 @@ public class PostOptionsModal
 			return false;
 		}
 
-		if (event.key() == 256)
+		if (event.key() == KEY_ESCAPE)
 		{
 			this.open = false;
 		}
 
 		return true;
+	}
+
+	public Rect[] focusButtons()
+	{
+		return new Rect[]{this.edit, this.unpublish, this.cancel};
+	}
+
+	public void activateFocus(Rect button, int index)
+	{
+		if (index == 0)
+		{
+			this.doEdit();
+		}
+		else if (index == 1)
+		{
+			this.doUnpublish();
+		}
+		else
+		{
+			this.doCancel();
+		}
+	}
+
+	// Shared by activateFocus and mouseClicked so the two paths cannot drift apart
+	private void doEdit()
+	{
+		Theme.click(1.1F);
+		String id = this.id;
+		this.open = false;
+
+		if (id != null)
+		{
+			this.screen.openEditPost(id);
+		}
+	}
+
+	private void doUnpublish()
+	{
+		Theme.click(0.9F);
+		this.open = false;
+		this.screen.unpublishModal.open(this.id, this.title);
+	}
+
+	private void doCancel()
+	{
+		Theme.click(0.9F);
+		this.open = false;
 	}
 }

@@ -144,7 +144,7 @@ class DetailActions
 		if (this.view.posterRect.contains(mouseX, mouseY) || this.view.viewProfile.contains(mouseX, mouseY))
 		{
 			Theme.click(1.0F);
-			screen.openProfile(entry.poster());
+			screen.browsePage.profile.open(entry.poster());
 			return;
 		}
 
@@ -341,8 +341,7 @@ class DetailActions
 		if (result.status() == 402)
 		{
 			Theme.failure();
-			Toasts.push("Not Enough Shards", "You don't have enough shards to purchase this schematic.",
-					new ItemStack(Items.AMETHYST_SHARD));
+			Toasts.notEnoughShards("You don't have enough shards to purchase this schematic.");
 			return;
 		}
 

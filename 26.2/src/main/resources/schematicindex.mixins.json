@@ -6,6 +6,7 @@
   "mixins": [],
   "client": [
     "EntityRendererMixin",
+    "FontMixin",
     "KeyBindsScreenMixin",
     "KeyMappingCategoryAccessor",
     "MainMixin",
@@ -16,7 +17,10 @@
     "GameRendererMixin",
     "ToastManagerMixin",
     "OutputTargetMixin",
-    "TextDisplayMixin"
+    "TextDisplayMixin",
+    "PlayerTabOverlayMixin",
+    "ChatComponentMixin",
+    "TitleScreenMixin"
   ],
   "server": [],
   "injectors": {

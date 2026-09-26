@@ -60,7 +60,7 @@ public final class BatchDownload
 		this.stopping = false;
 		Usage.send("download_all");
 		this.screen.beginDownload(this.queue.get(0), false);
-		this.screen.refreshChipRow();
+		this.screen.browsePage.refreshChipRow();
 	}
 
 	// Polled each frame: Download.progress is the only signal the transfer thread leaves behind
@@ -82,7 +82,7 @@ public final class BatchDownload
 		if (state == Download.State.FAILED)
 		{
 			this.failed = true;
-			this.screen.refreshChipRow();
+			this.screen.browsePage.refreshChipRow();
 			return;
 		}
 
@@ -163,7 +163,7 @@ public final class BatchDownload
 			Theme.click(1.1F);
 			this.failed = false;
 			this.screen.beginDownload(this.queue.get(this.index), false);
-			this.screen.refreshChipRow();
+			this.screen.browsePage.refreshChipRow();
 			return true;
 		}
 
@@ -218,6 +218,6 @@ public final class BatchDownload
 		this.failed = false;
 		this.stopping = false;
 		this.queue.clear();
-		this.screen.refreshChipRow();
+		this.screen.browsePage.refreshChipRow();
 	}
 }

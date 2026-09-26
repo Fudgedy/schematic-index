@@ -3,6 +3,7 @@ package com.fudgedy.schematicindex.gui.detail;
 import com.fudgedy.schematicindex.Errors;
 import com.fudgedy.schematicindex.catalogue.Backend;
 import com.fudgedy.schematicindex.catalogue.Catalogue;
+import com.fudgedy.schematicindex.catalogue.Category;
 import com.fudgedy.schematicindex.catalogue.Json;
 import com.fudgedy.schematicindex.catalogue.McAuth;
 import com.fudgedy.schematicindex.catalogue.Premium;
@@ -13,7 +14,9 @@ import com.fudgedy.schematicindex.gui.SchematicPreview;
 import com.fudgedy.schematicindex.gui.Theme;
 import com.fudgedy.schematicindex.gui.Toasts;
 import com.fudgedy.schematicindex.gui.UploaderAccess;
+import com.fudgedy.schematicindex.gui.modal.CoachMark;
 import com.fudgedy.schematicindex.gui.widget.Rect;
+import com.google.gson.JsonObject;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.input.KeyEvent;
@@ -113,14 +116,26 @@ public class DetailView
 		}
 	}
 
+	public void applyEdit(String postId, String title, String thumbnailName, String designer, String description,
+			Category category)
+	{
+		SchematicEntry open = this.entry;
+
+		if (open != null && postId.equals(open.id()))
+		{
+			this.entry = open.withText(title, thumbnailName, designer, description, category);
+		}
+	}
+
 	public boolean isPremium()
 	{
 		return this.premium != null;
 	}
 
+	// Premium listings are private and have no share page, so presence stays on the generic line
 	public void openPremium(SchematicEntry entry, Premium.Entry premium)
 	{
-		this.open(entry);
+		this.show(entry);
 		this.premium = premium;
 		this.model = false;
 		Backend.premiumViewAsync(entry.id());
@@ -128,38 +143,7 @@ public class DetailView
 
 	public void open(SchematicEntry entry)
 	{
-		this.entry = entry;
-		this.premium = null;
-		this.collectionMenu.close();
-		Backend.viewAsync(entry.id());
-
-		// The lite catalogue omits materials and description; they arrive here, unless the view has moved on
-		Catalogue.loadDetails(entry, filled ->
-		{
-			if (this.entry != null && this.entry.id().equals(filled.id()))
-			{
-				this.entry = filled;
-			}
-		});
-
-		this.myStars = entry.myStars();
-		this.committedStars = entry.myStars();
-		this.starAvg = entry.starAvg();
-		this.starCount = entry.starCount();
-
-		this.screen.recordViewed(entry.id());
-
-		Theme.click(1.2F);
-		this.openedAt = System.currentTimeMillis();
-		this.image = 0;
-		this.preloadGallery();
-		this.model = false;
-		this.camera.yaw = 35.0F;
-		this.camera.pitch = 28.0F;
-		this.camera.zoom = 1.0F;
-		this.camera.layer = 1.0F;
-		this.screen.detailDownloadLocked = false;
-		this.resetState();
+		this.show(entry);
 	}
 
 	public void close()
@@ -210,7 +194,8 @@ public class DetailView
 	public boolean overlayOpen()
 	{
 		return this.screen.overwriteConfirm.isOpen() || this.screen.reportModal.isPickerOpen()
-				|| this.screen.reportModal.isContextOpen() || this.screen.claimModal.isOpen();
+				|| this.screen.reportModal.isContextOpen() || this.screen.claimModal.isOpen()
+				|| (this.screen.staff != null && this.screen.staff.isModalOpen());
 	}
 
 	public void tickSpectator()
@@ -244,6 +229,11 @@ public class DetailView
 
 	public void releaseDrags()
 	{
+		if (this.camera.draggingLayer)
+		{
+			Theme.click(1.0F);
+		}
+
 		this.camera.orbiting = false;
 		this.camera.draggingLayer = false;
 	}
@@ -425,6 +415,25 @@ public class DetailView
 		worker.start();
 	}
 
+	// A rating sent from the download prompt, folded in when its post is the one on screen
+	void applyRating(String id, @Nullable JsonObject body, int value)
+	{
+		if (this.entry == null || !this.entry.id().equals(id) || this.pendingRateValue >= 0)
+		{
+			return;
+		}
+
+		this.starAvg = Json.doubleOf(body, "starAvg", this.starAvg);
+		this.starCount = Json.intOf(body, "starCount", this.starCount);
+		this.myStars = Json.intOf(body, "myStars", value);
+		this.committedStars = this.myStars;
+	}
+
+	int shownStars(String id)
+	{
+		return this.entry != null && this.entry.id().equals(id) ? this.myStars : 0;
+	}
+
 	// A second click on the same star drops to a half star, a third clears the rating
 	void rateStar(SchematicEntry entry, int starIndex)
 	{
@@ -449,6 +458,43 @@ public class DetailView
 
 		String me = McAuth.verifiedName();
 		return me == null || entry.designer() == null || !me.equalsIgnoreCase(entry.designer().trim());
+	}
+
+	private void show(SchematicEntry entry)
+	{
+		this.entry = entry;
+		this.premium = null;
+		this.collectionMenu.close();
+		Backend.viewAsync(entry.id());
+
+		// The lite catalogue omits materials and description; they arrive here, unless the view has moved on
+		Catalogue.loadDetails(entry, filled ->
+		{
+			if (this.entry != null && this.entry.id().equals(filled.id()))
+			{
+				this.entry = filled;
+			}
+		});
+
+		this.myStars = entry.myStars();
+		this.committedStars = entry.myStars();
+		this.starAvg = entry.starAvg();
+		this.starCount = entry.starCount();
+
+		this.screen.browsePage.recordViewed(entry.id());
+
+		Theme.click(1.2F);
+		this.openedAt = System.currentTimeMillis();
+		this.image = 0;
+		this.preloadGallery();
+		this.model = false;
+		this.camera.yaw = 35.0F;
+		this.camera.pitch = 28.0F;
+		this.camera.zoom = 1.0F;
+		this.camera.layer = 1.0F;
+		this.screen.detailDownloadLocked = false;
+		this.resetState();
+		CoachMark.maybe(this.screen, CoachMark.Kind.PREVIEW);
 	}
 
 	private void queueRating(SchematicEntry entry, int value)

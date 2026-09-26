@@ -254,11 +254,11 @@ public class LoadCodeModal
 				}
 
 				this.open = false;
-				this.screen.activeCollection = name;
-				this.screen.sharedCode = null;
-				this.screen.layoutChips();
+				this.screen.browsePage.activeCollection = name;
+				this.screen.browsePage.collections.sharedCode = null;
+				this.screen.browsePage.layoutChips();
 				this.screen.gridTop = IndexScreen.TOP_BAR_HEIGHT + this.screen.chipRowHeight;
-				this.screen.refilter();
+				this.screen.browsePage.refilter();
 				Toasts.push("Collection loaded", ids.size() + " posts added.", new ItemStack(Items.BOOKSHELF));
 			});
 		}, "schematicindex-loadcode");

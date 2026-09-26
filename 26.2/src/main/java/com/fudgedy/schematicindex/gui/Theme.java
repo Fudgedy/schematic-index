@@ -1,5 +1,6 @@
 package com.fudgedy.schematicindex.gui;
 
+import com.fudgedy.schematicindex.SchematicIndexMod;
 import com.fudgedy.schematicindex.Settings;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
@@ -13,6 +14,7 @@ import net.minecraft.sounds.SoundEvents;
 import net.minecraft.world.item.ItemStack;
 
 import java.util.IdentityHashMap;
+import java.util.Locale;
 import java.util.Map;
 
 public final class Theme
@@ -56,6 +58,60 @@ public final class Theme
 	public static final int RADIUS_PILL = 2;
 	public static final int RADIUS_CARD = 3;
 	public static final int RADIUS_MODAL = 4;
+
+	public static final int SPACE_2XS = 2;
+	public static final int SPACE_XS = 4;
+	public static final int SPACE_S = 8;
+	public static final int SPACE_M = 12;
+	public static final int SPACE_L = 16;
+	public static final int SPACE_XL = 24;
+	public static final int SPACE_2XL = 32;
+
+	public static final int H_BADGE = 11;
+	public static final int H_CONTROL = 16;
+	public static final int H_CONTROL_L = 20;
+	public static final int H_TAB = 20;
+	public static final int H_ROW = 28;
+	public static final int H_ROW_2 = 36;
+	public static final int ICON_S = 8;
+	public static final int ICON_M = 16;
+	public static final int ICON_L = 32;
+	public static final int EDIT_ICON_SIZE = 12;
+	private static final Identifier EDIT = Identifier.fromNamespaceAndPath(SchematicIndexMod.MOD_ID, "textures/gui/edit.png");
+	private static final Identifier EDIT_HOVER =
+			Identifier.fromNamespaceAndPath(SchematicIndexMod.MOD_ID, "textures/gui/edit_hover.png");
+	public static final int BUTTON_PAD_X = 10;
+	public static final int BUTTON_MIN_WIDTH = 56;
+	public static final int TEXT_MAX_WIDTH = 360;
+	public static final int MODAL_L = 440;
+
+	public static final int ACCENT_HOVER = 0xFF448A6F;
+	// Selected tiles take a dark wash of the accent, so selection never outshouts the primary button
+	public static final int ACCENT_TINT = 0xFF213834;
+	public static final int SURFACE_HOVER = 0xFF2A3037;
+	public static final int HAIRLINE_STRONG = 0xFF3A424A;
+	public static final int SUCCESS = ACCENT_BRIGHT;
+	public static final int WARNING = 0xFFE3A13B;
+	public static final int WARNING_TINT = 0xFF3C352A;
+	public static final int DANGER = 0xFFD64545;
+	public static final int DANGER_TINT = 0xFF3A2427;
+	public static final int DANGER_TEXT = 0xFFE06A6A;
+	// SHARD reads at 3.8:1 on cards, too dim for prices; amounts use the lifted tone
+	public static final int SHARD_TEXT = 0xFFA87FE0;
+	public static final int SHARD_TINT = 0xFF343048;
+	public static final int FROZEN_TINT = 0xFF1F3A52;
+	public static final int EMBER_TINT = 0xFF42281D;
+	public static final int FROZEN_BORDER = 0xFF4FA8DC;
+	public static final int PODIUM_GOLD = 0xFFE8C55E;
+	public static final int PODIUM_SILVER = 0xFFC0C6CC;
+	public static final int PODIUM_BRONZE = 0xFFCD8B4E;
+
+	public static final long MOTION_HOVER_MS = 120L;
+	public static final long MOTION_PRESS_MS = 90L;
+	public static final long MOTION_TAB_MS = 160L;
+	public static final long MOTION_MODAL_MS = 180L;
+	public static final long MOTION_REWARD_MS = 800L;
+	public static final long MOTION_PULSE_MS = 1200L;
 
 	private Theme()
 	{
@@ -314,6 +370,11 @@ public final class Theme
 
 	public static float buttonHover(Object key, boolean hovered)
 	{
+		return buttonHover(key, hovered, HOVER_MS);
+	}
+
+	public static float buttonHover(Object key, boolean hovered, long durationMs)
+	{
 		long now = Minecraft.getInstance() == null ? 0L : System.currentTimeMillis();
 		sweep(now);
 		Fx fx = BUTTON_FX.get(key);
@@ -328,7 +389,7 @@ public final class Theme
 			return fx.hover;
 		}
 
-		float step = (now - fx.lastUpdate) / (float) HOVER_MS;
+		float step = (now - fx.lastUpdate) / (float) durationMs;
 		fx.lastUpdate = now;
 		fx.lastTouch = now;
 		float target = hovered ? 1.0F : 0.0F;
@@ -344,6 +405,20 @@ public final class Theme
 		long now = System.currentTimeMillis();
 		fx.pressAt = now;
 		fx.lastTouch = now;
+	}
+
+	// 1 at the moment of the press, easing to 0 over the duration; read-only, so buttonScale callers are unaffected
+	public static float pressAmount(Object key, long durationMs)
+	{
+		Fx fx = BUTTON_FX.get(key);
+
+		if (fx == null || fx.pressAt < 0L)
+		{
+			return 0.0F;
+		}
+
+		long age = System.currentTimeMillis() - fx.pressAt;
+		return age >= durationMs ? 0.0F : 1.0F - easeOut(age / (float) durationMs);
 	}
 
 	public static float buttonScale(Object key, float base)
@@ -446,6 +521,14 @@ public final class Theme
 	{
 		ctx.blit(RenderPipelines.GUI_TEXTURED, texture, x, y, 0.0F, 0.0F, width, height,
 				sourceWidth, sourceHeight, sourceWidth, sourceHeight);
+	}
+
+	// One square frame of a vertical sprite strip, drawn at size
+	public static void frame(GuiGraphicsExtractor ctx, Identifier texture, int x, int y, int size, int frameSize, int frame,
+			int frames)
+	{
+		ctx.blit(RenderPipelines.GUI_TEXTURED, texture, x, y, 0.0F, (float) (frame * frameSize), size, size,
+				frameSize, frameSize, frameSize, frameSize * frames);
 	}
 
 	// For GPU framebuffer textures, whose colour attachment is bottom-left origin
@@ -580,6 +663,62 @@ public final class Theme
 		return 1.0F - p * p * p;
 	}
 
+	public static int mix(int from, int to, float t)
+	{
+		float clamped = Math.max(0.0F, Math.min(1.0F, t));
+		int alpha = Math.round((from >>> 24) + ((to >>> 24) - (from >>> 24)) * clamped);
+		return (alpha << 24) | lerpColor(from, to, clamped);
+	}
+
+	// 0 to 1 and back once per MOTION_PULSE_MS, for the one element on screen that asks for attention
+	public static float pulse()
+	{
+		float phase = System.currentTimeMillis() % MOTION_PULSE_MS / (float) MOTION_PULSE_MS;
+		return 0.5F - 0.5F * (float) Math.cos(phase * Math.PI * 2.0D);
+	}
+
+	public static String count(int value)
+	{
+		int magnitude = Math.abs(value);
+
+		if (magnitude < 10_000)
+		{
+			return String.format(Locale.ROOT, "%,d", value);
+		}
+
+		if (magnitude < 1_000_000)
+		{
+			return String.format(Locale.ROOT, "%.1fk", value / 1000.0);
+		}
+
+		return String.format(Locale.ROOT, "%.1fM", value / 1_000_000.0);
+	}
+
+	public static String duration(long ms)
+	{
+		long minutes = Math.max(0L, ms) / 60_000L;
+
+		if (minutes < 1L)
+		{
+			return "<1m";
+		}
+
+		long days = minutes / 1440L;
+		long hours = minutes % 1440L / 60L;
+
+		if (days > 0L)
+		{
+			return hours > 0L ? days + "d " + hours + "h" : days + "d";
+		}
+
+		return hours > 0L ? hours + "h " + minutes % 60L + "m" : minutes + "m";
+	}
+
+	public static void item(GuiGraphicsExtractor ctx, ItemStack stack, int x, int y)
+	{
+		ctx.item(stack, x, y);
+	}
+
 	private static final String[] HEART_INNER = {
 			"         ",
 			"  XX XX  ",
@@ -711,6 +850,11 @@ public final class Theme
 		sound(SoundEvents.NOTE_BLOCK_CHIME.value(), 1.3F, 0.45F);
 	}
 
+	public static void shutter()
+	{
+		sound(SoundEvents.UI_CARTOGRAPHY_TABLE_TAKE_RESULT, 1.4F, 0.9F);
+	}
+
 	public static void amethystBreak()
 	{
 		sound(SoundEvents.AMETHYST_CLUSTER_BREAK, 1.0F, 0.8F);
@@ -756,17 +900,11 @@ public final class Theme
 		sound(SoundEvents.NOTE_BLOCK_BELL.value(), 1.2F, 0.6F);
 	}
 
-	public static void editGlyph(GuiGraphicsExtractor ctx, int x, int y, int color)
+	// A pixel pencil rather than a drawn stroke; the hover art lifts every fill one step and keeps the outline
+	public static void editIcon(GuiGraphicsExtractor ctx, int x, int y, boolean hovered)
 	{
-		ctx.fill(x, y + 6, x + 2, y + 8, color);
-		ctx.fill(x + 1, y + 5, x + 3, y + 7, color);
-		ctx.fill(x + 2, y + 4, x + 4, y + 6, color);
-		ctx.fill(x + 3, y + 3, x + 5, y + 5, color);
-		ctx.fill(x + 4, y + 2, x + 6, y + 4, color);
-		ctx.fill(x + 5, y + 1, x + 7, y + 3, color);
+		image(ctx, hovered ? EDIT_HOVER : EDIT, x, y, EDIT_ICON_SIZE, EDIT_ICON_SIZE, EDIT_ICON_SIZE, EDIT_ICON_SIZE);
 	}
-
-	public static final int EDIT_GLYPH_WIDTH = 7;
 
 	public static void heartPopped(GuiGraphicsExtractor ctx, int x, int y, boolean liked, long age)
 	{

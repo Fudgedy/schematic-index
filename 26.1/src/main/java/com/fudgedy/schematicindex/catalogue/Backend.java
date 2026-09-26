@@ -1,5 +1,6 @@
 package com.fudgedy.schematicindex.catalogue;
 
+import com.fudgedy.schematicindex.Errors;
 import com.fudgedy.schematicindex.SchematicIndexMod;
 import com.fudgedy.schematicindex.Settings;
 import com.fudgedy.schematicindex.gui.SchematicPreview;
@@ -43,6 +44,7 @@ public final class Backend
 	private static final long[] RETRY_BACKOFF_MS = { 500L, 1500L };
 	private static final int ETAG_LIMIT = 128;
 	private static final int FILE_HASH_LIMIT = 1024;
+	private static final int DUPLICATE_CHECK_LIMIT = 32;
 
 	// Identity sentinel for a 304: the caller already holds this body and must not treat it as a fresh one
 	public static final JsonObject NOT_MODIFIED = new JsonObject();
@@ -55,6 +57,16 @@ public final class Backend
 		protected boolean removeEldestEntry(Map.Entry<String, String> eldest)
 		{
 			return this.size() > ETAG_LIMIT;
+		}
+	};
+
+	// Keyed by file content hash, so re-picking the same schematic in one session never re-checks it
+	private static final Map<String, ApiResult> DUPLICATE_CHECKS = new LinkedHashMap<>(16, 0.75F, true)
+	{
+		@Override
+		protected boolean removeEldestEntry(Map.Entry<String, ApiResult> eldest)
+		{
+			return this.size() > DUPLICATE_CHECK_LIMIT;
 		}
 	};
 
@@ -99,7 +111,27 @@ public final class Backend
 	// The public share page for a post, which unfurls in Discord unlike a bare image URL
 	public static String shareUrl(String postId)
 	{
-		return base() + "/share/" + encode(postId);
+		String url = siteBase() + "/b/" + encode(postId);
+		Shards.Referral referral = Shards.referral();
+
+		if (!RemoteContent.feature("shareAttribution") || referral == null || referral.code() == null || referral.code().isBlank())
+		{
+			return url;
+		}
+
+		return url + "?r=" + encode(referral.code());
+	}
+
+	public static String profileUrl(String ign)
+	{
+		return siteBase() + "/u/" + encode(ign);
+	}
+
+	// Share pages, profiles and redirects live on the bare domain; a self-hosted API serves them itself
+	public static String siteBase()
+	{
+		String base = base();
+		return base.equals("https://api.schematicindex.com") ? "https://schematicindex.com" : base;
 	}
 
 	// Captured as posts are parsed so the download flow can verify fetched bytes; bounded like the etags
@@ -360,12 +392,13 @@ public final class Backend
 		return postForApiResult(path, jsonBody).status();
 	}
 
-	// Blocks, so call it off the main thread; game version and language ride along for the presence stats
-	public static void heartbeat(String version)
+	// Blocks, so call it off the main thread; game version and language ride along for the presence stats.
+	// Null for the legacy 204 and for any failure, so an older server simply sends no nudge
+	public static @Nullable JsonObject heartbeat(String version)
 	{
 		if (!configured())
 		{
-			return;
+			return null;
 		}
 
 		JsonObject body = new JsonObject();
@@ -373,8 +406,9 @@ public final class Backend
 		body.addProperty("mcVersion", FabricLoader.getInstance().getModContainer("minecraft")
 				.map(container -> container.getMetadata().getVersion().getFriendlyString()).orElse(""));
 		body.addProperty("locale", Minecraft.getInstance().getLanguageManager().getSelected());
-		int status = postJson("/presence", body.toString());
-		SchematicIndexMod.LOGGER.debug("Presence heartbeat -> {}", status);
+		ApiResult result = postForApiResult("/presence", body.toString());
+		SchematicIndexMod.LOGGER.debug("Presence heartbeat -> {}", result.status());
+		return result.ok() ? result.body() : null;
 	}
 
 	public static void likeAsync(String postId, boolean like)
@@ -431,6 +465,17 @@ public final class Backend
 	public static @Nullable JsonObject ownedPremium()
 	{
 		return get("/me/premium/owned", true, false);
+	}
+
+	// The poll is also the room beat; no room leaves whichever one the account was in
+	public static ApiResult peers(@Nullable String room, long since)
+	{
+		if (room == null)
+		{
+			return getForApiResult("/me/peers");
+		}
+
+		return getForApiResult("/me/peers?server=" + encode(room) + "&since=" + since);
 	}
 
 	public static @Nullable JsonObject modUsers(List<String> uuids)
@@ -800,6 +845,12 @@ public final class Backend
 		return result.ok() ? result.body() : null;
 	}
 
+	// Buys one Streak Freeze; 402 insufficient, 409 freeze_max. Success echoes the whole shard panel
+	public static ApiResult buyFreeze()
+	{
+		return postForApiResult("/me/streak/freeze/buy", "{}");
+	}
+
 	// The server credits the welcome shards here rather than on verify
 	public static ApiResult claimWelcome()
 	{
@@ -835,6 +886,48 @@ public final class Backend
 	public static ApiResult submitClaim(String postId, String note)
 	{
 		return postForApiResult("/post/" + encode(postId) + "/claim", one("note", note == null ? "" : note));
+	}
+
+	public static ApiResult linkState()
+	{
+		return getForApiResult("/me/link");
+	}
+
+	// 201 a new code, 200 the live one, 409 already_linked, 503 feature_off
+	public static ApiResult linkCode()
+	{
+		return postForApiResult("/me/link/code", "{}");
+	}
+
+	// 404 no_request, 410 request_expired, 409 already_linked or discord_taken, 429 relink_cooldown with availableAt
+	public static ApiResult linkAccept(int requestId)
+	{
+		return postForApiResult("/me/link/requests/" + requestId + "/accept", "{}");
+	}
+
+	public static ApiResult linkDeny(int requestId, boolean block)
+	{
+		JsonObject body = new JsonObject();
+		body.addProperty("block", block);
+		return postForApiResult("/me/link/requests/" + requestId + "/deny", body.toString());
+	}
+
+	public static ApiResult unlinkDiscord()
+	{
+		return sendForApiResult("DELETE", "/me/link", null);
+	}
+
+	public static ApiResult privacy()
+	{
+		return getForApiResult("/me/privacy");
+	}
+
+	public static ApiResult putPrivacy(boolean publicProfile, boolean showOnLeaderboards)
+	{
+		JsonObject body = new JsonObject();
+		body.addProperty("publicProfile", publicProfile);
+		body.addProperty("showOnLeaderboards", showOnLeaderboards);
+		return sendForApiResult("PUT", "/me/privacy", body.toString());
 	}
 
 	public static @Nullable JsonObject myClaims()
@@ -991,7 +1084,7 @@ public final class Backend
 		}
 	}
 
-	public static @Nullable JsonObject myStats(String code, int days)
+	public static @Nullable JsonObject myStats(@Nullable String code, String query)
 	{
 		if (!configured())
 		{
@@ -1000,12 +1093,17 @@ public final class Backend
 
 		try
 		{
-			HttpRequest request = HttpRequest.newBuilder(URI.create(base() + "/me/stats?days=" + days))
+			HttpRequest.Builder builder = HttpRequest.newBuilder(URI.create(base() + "/me/stats?" + query))
 					.timeout(Duration.ofSeconds(12))
-					.header("Accept-Encoding", "gzip")
-					.header("X-Upload-Code", code)
-					.GET()
-					.build();
+					.header("Accept-Encoding", "gzip");
+			attachSession(builder);
+
+			if (code != null)
+			{
+				builder.header("X-Upload-Code", code);
+			}
+
+			HttpRequest request = builder.GET().build();
 			HttpResponse<byte[]> response = Net.client().send(request, HttpResponse.BodyHandlers.ofByteArray());
 
 			if (response.statusCode() >= 400)
@@ -1388,7 +1486,7 @@ public final class Backend
 		}
 	}
 
-	public static ApiResult editPost(String code, String postId, String title, String thumbnailName, String designer,
+	public static ApiResult editPost(@Nullable String code, String postId, String title, String thumbnailName, String designer,
 			String description, String category)
 	{
 		JsonObject body = new JsonObject();
@@ -1400,12 +1498,12 @@ public final class Backend
 		return postWithCode("/me/posts/" + encode(postId) + "/edit", code, body.toString());
 	}
 
-	public static ApiResult unpublishPost(String code, String postId)
+	public static ApiResult unpublishPost(@Nullable String code, String postId)
 	{
 		return postWithCode("/me/posts/" + encode(postId) + "/unpublish", code, "{}");
 	}
 
-	private static ApiResult postWithCode(String path, String code, String jsonBody)
+	private static ApiResult postWithCode(String path, @Nullable String code, String jsonBody)
 	{
 		if (!configured())
 		{
@@ -1417,9 +1515,14 @@ public final class Backend
 			HttpRequest.Builder builder = HttpRequest.newBuilder(URI.create(base() + path))
 					.timeout(Duration.ofSeconds(12))
 					.header("Content-Type", "application/json")
-					.header("Accept-Encoding", "gzip")
-					.header("X-Upload-Code", code);
+					.header("Accept-Encoding", "gzip");
 			attachSession(builder);
+
+			if (code != null)
+			{
+				builder.header("X-Upload-Code", code);
+			}
+
 			HttpRequest request = builder
 					.POST(HttpRequest.BodyPublishers.ofString(jsonBody, StandardCharsets.UTF_8))
 					.build();
@@ -1443,7 +1546,7 @@ public final class Backend
 		}
 	}
 
-	public record UploadResult(int status, @Nullable String message)
+	public record UploadResult(int status, @Nullable String error, @Nullable String message)
 	{
 	}
 
@@ -1454,12 +1557,28 @@ public final class Backend
 		return uploadFraction;
 	}
 
-	public static UploadResult upload(String code, String metaJson, Path schematic, List<Path> images)
+	// A verified player posts on the session alone; a legacy code rides along when one is unlocked
+	public static UploadResult upload(@Nullable String code, String metaJson, Path schematic, List<Path> images)
 	{
 		if (!configured())
 		{
-			return new UploadResult(-1, null);
+			return new UploadResult(-1, null, null);
 		}
+
+		String session = McAuth.sessionToken();
+		UploadResult result = uploadWith(code, session, metaJson, schematic, images);
+
+		if (code != null || !recoverSession(sessionStatus(result.status(), result.error()), session))
+		{
+			return result;
+		}
+
+		return uploadWith(null, McAuth.sessionToken(), metaJson, schematic, images);
+	}
+
+	private static UploadResult uploadWith(@Nullable String code, @Nullable String session, String metaJson,
+			Path schematic, List<Path> images)
+	{
 
 		try
 		{
@@ -1478,9 +1597,17 @@ public final class Backend
 			final long bodyLength = total;
 			HttpRequest.Builder builder = HttpRequest.newBuilder(URI.create(base() + "/upload"))
 					.timeout(Duration.ofMinutes(10))
-					.header("X-Upload-Code", code)
 					.header("Content-Type", "multipart/form-data; boundary=" + boundary);
-			attachSession(builder);
+
+			if (code != null)
+			{
+				builder.header("X-Upload-Code", code);
+			}
+
+			if (session != null && !session.isBlank())
+			{
+				builder.header("X-Session", session);
+			}
 			HttpRequest request = builder
 					.POST(HttpRequest.BodyPublishers.ofInputStream(() -> {
 						// Fresh streams per subscription, so a retry or redirect re-sends from the beginning
@@ -1496,12 +1623,109 @@ public final class Backend
 					.build();
 			HttpResponse<String> response = Net.client().send(request, HttpResponse.BodyHandlers.ofString());
 			uploadFraction = 1.0;
-			return new UploadResult(response.statusCode(), messageOf(response.body()));
+			return new UploadResult(response.statusCode(), fieldOf(response.body(), "error"),
+					fieldOf(response.body(), "message"));
 		}
 		catch (Exception e)
 		{
 			SchematicIndexMod.LOGGER.warn("Upload failed", e);
-			return new UploadResult(-1, null);
+			return new UploadResult(-1, null, null);
+		}
+	}
+
+	// The one call allowed before Post: fired as soon as a schematic is picked, so a duplicate surfaces
+	// before the player fills out the rest of the form. Cached per content hash for the session
+	public static ApiResult checkDuplicateCached(@Nullable String code, Path schematic)
+	{
+		String hash = sha256Hex(schematic);
+
+		if (hash != null)
+		{
+			synchronized (DUPLICATE_CHECKS)
+			{
+				ApiResult cached = DUPLICATE_CHECKS.get(hash);
+
+				if (cached != null)
+				{
+					return cached;
+				}
+			}
+		}
+
+		String session = McAuth.sessionToken();
+		ApiResult result = checkDuplicate(code, schematic);
+
+		if (code == null && recoverSession(sessionStatus(result.status(), result.error()), session))
+		{
+			result = checkDuplicate(null, schematic);
+		}
+
+		if (hash != null && result.status() == 200)
+		{
+			synchronized (DUPLICATE_CHECKS)
+			{
+				DUPLICATE_CHECKS.put(hash, result);
+			}
+		}
+
+		return result;
+	}
+
+	private static ApiResult checkDuplicate(@Nullable String code, Path schematic)
+	{
+		if (!configured())
+		{
+			return new ApiResult(-1, null);
+		}
+
+		try
+		{
+			String boundary = "----schematicindex" + System.nanoTime();
+			List<BodyPart> parts = List.of(
+					BodyPart.of(filePartHeader(boundary, "schematic", schematic.getFileName().toString(), "application/octet-stream")),
+					BodyPart.of(schematic),
+					BodyPart.of("\r\n--" + boundary + "--\r\n"));
+
+			HttpRequest.Builder builder = HttpRequest.newBuilder(URI.create(base() + "/upload/check"))
+					.timeout(Duration.ofSeconds(20))
+					.header("Content-Type", "multipart/form-data; boundary=" + boundary)
+					.header("Accept-Encoding", "gzip");
+			attachSession(builder);
+
+			if (code != null)
+			{
+				builder.header("X-Upload-Code", code);
+			}
+
+			HttpRequest request = builder
+					.POST(HttpRequest.BodyPublishers.ofInputStream(() -> {
+						try
+						{
+							return openBody(parts);
+						}
+						catch (IOException e)
+						{
+							throw new UncheckedIOException(e);
+						}
+					}))
+					.build();
+			HttpResponse<byte[]> response = Net.client().send(request, HttpResponse.BodyHandlers.ofByteArray());
+			JsonObject body = null;
+
+			try
+			{
+				body = JsonParser.parseString(readBody(response)).getAsJsonObject();
+			}
+			catch (Exception ignored)
+			{
+			}
+
+			return new ApiResult(response.statusCode(), body);
+		}
+		catch (Exception e)
+		{
+			SchematicIndexMod.LOGGER.debug("Duplicate check failed ({})", Errors.UPLOAD_CHECK, e);
+			return new ApiResult(-1, null);
 		}
 	}
 
@@ -1550,12 +1774,18 @@ public final class Backend
 		}
 	}
 
-	private static @Nullable String messageOf(String body)
+	// The upload routes answer a dropped session with the shared code-or-session refusal, not a 401
+	private static int sessionStatus(int status, @Nullable String error)
+	{
+		return status == 403 && "bad_code".equals(error) ? 401 : status;
+	}
+
+	private static @Nullable String fieldOf(String body, String field)
 	{
 		try
 		{
 			JsonObject object = JsonParser.parseString(body).getAsJsonObject();
-			return Json.stringOf(object, "message", null);
+			return Json.stringOf(object, field, null);
 		}
 		catch (Exception e)
 		{
@@ -1675,7 +1905,7 @@ public final class Backend
 				boolOf(o, "liked"), doubleOf(o, "trendScore"), intOf(o, "views"),
 				doubleOf(o, "starAvg"), intOf(o, "starCount"), intOf(o, "myStars"),
 				parseMaterials(o), o.has("materials") && o.get("materials").isJsonArray(),
-				parseStops(o, "posterStops"));
+				parseStops(o, "posterStops"), str(o, "featuredOn"));
 	}
 
 	public static int[] parseStops(JsonObject o, String key)
@@ -1794,7 +2024,29 @@ public final class Backend
 			}
 		}
 
-		return new NewsFeed.Entry(str(o, "badge"), str(o, "title"), str(o, "when"), lines, boolOf(o, "highlight"));
+		List<NewsFeed.Item> items = new ArrayList<>();
+
+		for (JsonElement element : Json.arrayOf(o, "items"))
+		{
+			if (element.isJsonObject())
+			{
+				JsonObject item = element.getAsJsonObject();
+				items.add(new NewsFeed.Item(Json.stringOf(item, "icon", "minecraft:paper"), Json.stringOf(item, "text", "")));
+			}
+		}
+
+		// An older server sends no items, so its lines stand in for them
+		if (items.isEmpty())
+		{
+			for (String line : lines)
+			{
+				items.add(new NewsFeed.Item("minecraft:paper", line));
+			}
+		}
+
+		String version = str(o, "version");
+		return new NewsFeed.Entry(str(o, "badge"), str(o, "title"), str(o, "when"), lines, boolOf(o, "highlight"),
+				version == null || version.isBlank() ? null : version, items);
 	}
 
 	private static @Nullable String str(JsonObject o, String key)

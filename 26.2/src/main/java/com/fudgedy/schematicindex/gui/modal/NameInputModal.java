@@ -185,7 +185,7 @@ public class NameInputModal
 			}
 			else
 			{
-				this.screen.activeCollection = name;
+				this.screen.browsePage.activeCollection = name;
 			}
 		}
 
@@ -194,9 +194,9 @@ public class NameInputModal
 
 		if (this.screen.page == IndexScreen.Page.SAVED)
 		{
-			this.screen.layoutChips();
+			this.screen.browsePage.layoutChips();
 			this.screen.gridTop = IndexScreen.TOP_BAR_HEIGHT + this.screen.chipRowHeight;
-			this.screen.refilter();
+			this.screen.browsePage.refilter();
 		}
 	}
 

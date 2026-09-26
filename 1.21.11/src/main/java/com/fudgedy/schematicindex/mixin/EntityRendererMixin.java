@@ -23,8 +23,7 @@ public class EntityRendererMixin
 		if (name != null && entity instanceof AbstractClientPlayer player
 				&& (ModTags.isModUser(player.getUUID()) || ModTags.isLocalPreview(player.getUUID())))
 		{
-			// Rebuilt from the bare name: the returned display name already carries the team prefix/suffix
-			cir.setReturnValue(ModTags.decorate(player.getPlainTextName(), player.getTeam(), player.getUUID()));
+			cir.setReturnValue(ModTags.decorateShown(name, player.getPlainTextName(), player.getTeam(), player.getUUID()));
 		}
 	}
 }

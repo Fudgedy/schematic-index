@@ -21,8 +21,8 @@ import org.jetbrains.annotations.Nullable;
 import java.util.HashMap;
 import java.util.Map;
 
-// BlockPos indexes the Model's voxel grid directly and anything outside it reads as air. Real neighbour
-// states are what give the block renderer its face culling and AO
+// BlockPos indexes the Model's voxel grid directly and anything outside it, or at or above the cutaway
+// ceiling, reads as air. Real neighbour states are what give the block renderer its face culling and AO
 final class PreviewLevel implements BlockAndTintGetter
 {
 	private static final BlockState AIR = Blocks.AIR.defaultBlockState();
@@ -31,21 +31,28 @@ final class PreviewLevel implements BlockAndTintGetter
 
 	private final SchematicPreview.Model model;
 	private final BlockState[] states;
+	private final int ceiling;
 
 	private final Map<BlockPos, BlockEntity> blockEntities = new HashMap<>();
 
 	private @Nullable Biome biome;
 	private boolean biomeResolved;
 
-	PreviewLevel(SchematicPreview.Model model)
+	PreviewLevel(SchematicPreview.Model model, int ceiling)
 	{
 		this.model = model;
 		this.states = model.states();
+		this.ceiling = ceiling;
 	}
 
 	@Override
 	public BlockState getBlockState(BlockPos pos)
 	{
+		if (pos.getY() >= this.ceiling)
+		{
+			return AIR;
+		}
+
 		int cell = this.model.at(pos.getX(), pos.getY(), pos.getZ());
 
 		if (cell == 0)
